@@ -31,7 +31,9 @@ flowchart LR
     local <--> mosquitto
 ```
 
-- **mosquitto** bridges the local broker to Blynk Cloud, so anything on the Pi can publish/subscribe to datastreams over plain local MQTT without ever touching cloud credentials.
+- **mosquitto** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
+- **mosquitto** bridges the local broker to Blynk Cloud. Only mosquitto holds the Blynk auth token (for that cloud bridge connection) - anything else on the Pi just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
+- That local broker is only reachable on the Pi itself (`127.0.0.1:1883`) - nothing outside the Pi can connect to it.
 - **agent** subscribes to Blynk's downlink control topics: `downlink/ota/json` (downloads, validates, and applies a new `docker-compose.yml`, with automatic rollback on failure), `downlink/ping`, `downlink/reboot`, and `downlink/redirect`.
 - Your own containers or local scripts can be added alongside — see `test/` for minimal pub/sub examples.
 
