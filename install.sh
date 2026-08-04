@@ -23,7 +23,7 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
   sudo usermod -aG docker "$USER"
   echo "Docker installed. Log out and back in (group membership needs a new session), then re-run:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-agent-raspberry-pi/main/install.sh | bash"
+  echo "  curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-agent-raspberry-pi/master/install.sh | bash"
   exit 0
 fi
 
