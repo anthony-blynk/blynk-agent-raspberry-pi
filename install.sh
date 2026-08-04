@@ -64,3 +64,10 @@ echo "Starting stack..."
 docker compose -f "$STATE_DIR/docker-compose.yml" up -d
 
 echo "Done. Check status with: docker compose -f $STATE_DIR/docker-compose.yml ps"
+echo
+echo "This only ever runs once - from here, updates go through Blynk OTA."
+echo "When a new version is available, fetch the latest docker-compose.yml:"
+echo "  $RAW_BASE/docker-compose.yml"
+echo "and upload it through your Blynk console's OTA feature for this device."
+echo "(If you've added your own service(s) to $STATE_DIR/docker-compose.yml, merge"
+echo "the version/image changes into your copy rather than overwriting it wholesale.)"
