@@ -10,11 +10,13 @@
 # resolves correctly on that daemon if it's a real host path, not a path
 # that only means something inside the agent's own container.
 #
-# `build:` below is for building images from this checkout. Once you have a
-# registry, the version of this file that Blynk actually pushes should
-# reference built image tags (image: yourregistry/blynk-agent:0.1.0)
-# instead of `build:` - an OTA payload is just this YAML text, with no
-# source tree alongside it for docker to build from.
+# `build:` is kept alongside `image:` so a local checkout can still build
+# (`docker compose build`) - but an OTA push is just this YAML text with no
+# source tree attached, so what actually matters for OTA is that `image:`
+# points at something already sitting in a registry (ghcr.io here, built
+# and pushed by .github/workflows/build-and-push.yml). Bump both this
+# version and the image tags together - never reuse a version number for
+# different image content.
 
 x-stack:
   version: "0.1.2"
@@ -22,7 +24,7 @@ x-stack:
 services:
   mosquitto:
     build: ./mosquitto
-    image: blynk-mosquitto:local
+    image: ghcr.io/anthony-blynk/blynk-mosquitto:0.1.2
     restart: unless-stopped
     ports:
       - "127.0.0.1:1883:1883"
@@ -33,7 +35,7 @@ services:
 
   agent:
     build: ./agent
-    image: blynk-agent:local
+    image: ghcr.io/anthony-blynk/blynk-agent:0.1.2
     restart: unless-stopped
     depends_on:
       - mosquitto

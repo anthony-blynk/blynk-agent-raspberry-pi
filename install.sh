@@ -56,8 +56,11 @@ else
   echo "$STATE_DIR/blynk.env already exists, leaving it alone"
 fi
 
-echo "Building images..."
-(cd "$REPO_DIR" && docker compose build)
+echo "Pulling images..."
+if ! docker compose -f "$STATE_DIR/docker-compose.yml" pull; then
+  echo "Pull failed, building locally instead..."
+  (cd "$REPO_DIR" && docker compose build)
+fi
 
 echo "Starting stack..."
 docker compose -f "$STATE_DIR/docker-compose.yml" up -d
