@@ -20,14 +20,19 @@ flowchart LR
     subgraph pi["Raspberry Pi"]
         mosquitto["mosquitto<br/>local broker :1883"]
         agent["agent<br/>OTA / ping / reboot / redirect"]
-        app["your app<br/>(optional)"]
+        subgraph apps["your app(s) - optional"]
+            app1["app 1"]
+            app2["app 2"]
+            appdots["..."]
+        end
         local(["local scripts<br/>e.g. test/*.py"])
     end
 
     console <--> cloud
     cloud <-->|bridge: TLS, mqttv5| mosquitto
     agent <--> mosquitto
-    app -.-> mosquitto
+    app1 -.-> mosquitto
+    app2 -.-> mosquitto
     local <--> mosquitto
 ```
 
