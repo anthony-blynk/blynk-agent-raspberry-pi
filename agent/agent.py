@@ -259,6 +259,18 @@ class ComposeManager:
 
     def _run_docker_compose(self) -> bool:
         try:
+            # A device set up via install.sh has no source checkout, only
+            # pulled images - `up -d` alone would try to *build* an image
+            # tag it doesn't recognize (since `build:` is still in the
+            # file for local dev) rather than pull it. Pulling explicitly
+            # first sidesteps that entirely.
+            pull = subprocess.run(
+                ["docker", "compose", "-f", str(self.compose_path), "pull"],
+                capture_output=True, text=True, timeout=300,
+            )
+            if pull.returncode != 0:
+                logger.warning(f"Pull failed, falling back to build: {pull.stderr}")
+
             logger.info(f"Running docker compose for {self.compose_path}")
             process = subprocess.run(
                 ["docker", "compose", "-f", str(self.compose_path), "up", "-d", "--remove-orphans"],
