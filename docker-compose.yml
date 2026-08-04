@@ -1,0 +1,59 @@
+# This file is both:
+#  - the "day 0" stack you bring up manually the first time you set up a Pi
+#  - the same shape of file Blynk OTA pushes later to update the stack
+#
+# Convention: on the Pi, runtime state (this file once deployed, backups,
+# blynk.env, the rendered mosquitto bridge config) lives at /opt/blynk, and
+# /opt/blynk is bind-mounted 1:1 (identical absolute path on both sides)
+# into the agent container. That's required because the agent drives the
+# HOST's Docker daemon over the socket - any bind-mount path it uses only
+# resolves correctly on that daemon if it's a real host path, not a path
+# that only means something inside the agent's own container.
+#
+# `build:` below is for building images from this checkout. Once you have a
+# registry, the version of this file that Blynk actually pushes should
+# reference built image tags (image: yourregistry/blynk-agent:0.1.0)
+# instead of `build:` - an OTA payload is just this YAML text, with no
+# source tree alongside it for docker to build from.
+
+x-stack:
+  version: "0.1.2"
+
+services:
+  mosquitto:
+    build: ./mosquitto
+    image: blynk-mosquitto:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - /opt/blynk/mosquitto/conf.d:/mosquitto/config/conf.d
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  agent:
+    build: ./agent
+    image: blynk-agent:local
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    privileged: true
+    pid: "host"
+    environment:
+      - BLYNK_CONFIG_DIR=/opt/blynk
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+    volumes:
+      - /opt/blynk:/opt/blynk
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # user applications get added/removed/version-bumped here by OTA pushes:
+  # vending-app:
+  #   image: ghcr.io/you/vending-app:1.4.0
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - mosquitto
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:

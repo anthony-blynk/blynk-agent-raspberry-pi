@@ -1,0 +1,5 @@
+blynk-data/blynk.env
+blynk-data/docker-compose.yml
+blynk-data/docker-compose.yml.backup
+blynk-data/backups/
+blynk-data/mosquitto/

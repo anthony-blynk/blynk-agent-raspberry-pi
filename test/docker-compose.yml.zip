@@ -1,0 +1,6 @@
+x-stack:
+  version: "3.4.7"
+  
+services:
+  test:
+    image: hello-world
