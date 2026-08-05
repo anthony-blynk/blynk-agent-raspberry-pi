@@ -18,6 +18,8 @@
 # version and the image tags together - never reuse a version number for
 # different image content.
 
+name: blynk
+
 x-stack:
   version: "1.2.3"
 
