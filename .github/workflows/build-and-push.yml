@@ -36,6 +36,8 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/blynk-agent:latest
             ghcr.io/${{ github.repository_owner }}/blynk-agent:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
       - name: Build and push mosquitto
         uses: docker/build-push-action@v5
@@ -46,3 +48,5 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/blynk-mosquitto:latest
             ghcr.io/${{ github.repository_owner }}/blynk-mosquitto:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
