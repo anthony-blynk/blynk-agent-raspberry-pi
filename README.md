@@ -18,12 +18,14 @@ flowchart LR
     cloud(["Blynk Cloud"])
 
     subgraph pi["Raspberry Pi"]
-        mosquitto["mosquitto<br/>local broker :1883"]
-        agent["agent<br/>OTA / ping / reboot / redirect"]
-        subgraph apps["your app(s) - optional"]
-            app1["app 1"]
-            app2["app 2"]
-            appdots["..."]
+        subgraph compose["docker compose"]
+            mosquitto["mosquitto<br/>local broker :1883"]
+            agent["agent<br/>OTA / ping / reboot / redirect"]
+            subgraph apps["your app(s) - optional"]
+                app1["app 1"]
+                app2["app 2"]
+                appdots["..."]
+            end
         end
         local(["local scripts<br/>e.g. test/*.py"])
     end
