@@ -11,6 +11,7 @@ import time
 import subprocess
 import shutil
 import signal
+import socket
 import sys
 import os
 from pathlib import Path
@@ -205,14 +206,7 @@ class ComposeManager:
             new_file.replace(self.compose_path)
             logger.info(f"Updated compose file: {self.compose_path} ({current_version} -> {new_version})")
 
-            if self._run_docker_compose():
-                return True
-
-            logger.error("docker compose up failed, rolling back to previous version")
-            if backup_path:
-                shutil.copy2(backup_path, self.compose_path)
-                self._run_docker_compose()
-            return False
+            return self._apply_via_helper(backup_path)
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download compose file: {e}")
@@ -285,6 +279,63 @@ class ComposeManager:
             logger.error(f"Failed to run docker compose: {e}")
             return False
 
+    def _apply_via_helper(self, backup_path: Optional[Path]) -> bool:
+        """`docker compose up -d` run directly from here would be a child
+        process of THIS container - if the update recreates the agent
+        service (i.e. updates the agent itself), Docker tears this
+        container down mid-recreate and kills that child with it, leaving
+        the operation half-done. A detached helper container is not part
+        of what's being recreated, so it survives regardless and can
+        finish the job (and roll back) on its own."""
+        try:
+            my_image = subprocess.run(
+                ["docker", "inspect", "--format", "{{.Config.Image}}", socket.gethostname()],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+            if not my_image:
+                logger.error("Could not determine own image, applying directly instead")
+                return self._run_docker_compose()
+
+            process = subprocess.run(
+                [
+                    "docker", "run", "-d", "--rm",
+                    "--name", "blynk-apply-helper",
+                    "-v", f"{CONFIG_BASE}:{CONFIG_BASE}",
+                    "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                    "-e", f"BLYNK_CONFIG_DIR={CONFIG_BASE}",
+                    my_image,
+                    "python3", "agent.py", "--apply-only", str(backup_path or ""),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            if process.returncode != 0:
+                logger.error(f"Failed to launch apply helper: {process.stderr}")
+                return False
+            logger.info("Handed off compose apply to a detached helper container")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to launch apply helper: {e}")
+            return False
+
+
+def run_apply_only(backup_arg: str) -> None:
+    compose_manager = ComposeManager()
+    if compose_manager._run_docker_compose():
+        logger.info("Detached apply succeeded")
+        return
+
+    logger.error("Detached apply failed, attempting rollback")
+    backup_path = Path(backup_arg) if backup_arg else None
+    if not backup_path or not backup_path.exists():
+        candidates = sorted(BACKUP_DIR.glob("docker-compose_backup_*.yml"))
+        backup_path = candidates[-1] if candidates else None
+
+    if backup_path and backup_path.exists():
+        shutil.copy2(backup_path, COMPOSE_FILE)
+        compose_manager._run_docker_compose()
+    else:
+        logger.error("No backup available to roll back to")
+
 
 class BlynkAgent:
     """MQTT client against the local mosquitto broker only - no TLS, no
@@ -355,7 +406,7 @@ class BlynkAgent:
 
         logger.info(f"Starting OTA update from: {url}")
         if self.compose_manager.update_from_url(url):
-            logger.info("OTA update completed successfully")
+            logger.info("OTA update handed off for apply")
             time.sleep(2)
             self._publish_device_info()
         else:
@@ -428,6 +479,10 @@ class BlynkAgent:
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--apply-only":
+        run_apply_only(sys.argv[2] if len(sys.argv) > 2 else "")
+        return
+
     config = BlynkConfig()
     if not config.load():
         logger.error("Failed to load configuration. Exiting.")
