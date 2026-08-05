@@ -4,6 +4,8 @@ Turns a Raspberry Pi into a Blynk device. A local MQTT broker acts as a bridge t
 
 ## Install
 
+Get up and running on a fresh Pi with a single command:
+
 ```
 curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-agent-raspberry-pi/master/install.sh | bash
 ```
