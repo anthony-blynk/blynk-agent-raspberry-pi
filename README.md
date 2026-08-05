@@ -1,6 +1,6 @@
 # Blynk Agent for Raspberry Pi
 
-Turns a Raspberry Pi into a Blynk device: a local MQTT broker bridges to Blynk Cloud, and an agent manages the device's own `docker-compose.yml` via Blynk OTA.
+Turns a Raspberry Pi into a Blynk device. A local MQTT broker acts as a bridge to Blynk Cloud and handles the connection complexity — auth, certificates, all of it — so every other service on the Pi just speaks plain local MQTT, while the whole stack stays updatable over the air through Blynk OTA.
 
 ## Install
 
