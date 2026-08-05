@@ -36,6 +36,8 @@ flowchart LR
     app1 -.-> mosquitto
     app2 -.-> mosquitto
     local <--> mosquitto
+
+    style compose fill:#dbe9ff,stroke:#5b8def,color:#1a1a1a
 ```
 
 - **mosquitto** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
