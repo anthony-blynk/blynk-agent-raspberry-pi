@@ -296,18 +296,27 @@ class ComposeManager:
                 logger.error("Could not determine own image, applying directly instead")
                 return self._run_docker_compose()
 
-            process = subprocess.run(
-                [
-                    "docker", "run", "-d", "--rm",
-                    "--name", "blynk-apply-helper",
-                    "-v", f"{CONFIG_BASE}:{CONFIG_BASE}",
-                    "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                    "-e", f"BLYNK_CONFIG_DIR={CONFIG_BASE}",
-                    my_image,
-                    "python3", "agent.py", "--apply-only", str(backup_path or ""),
-                ],
-                capture_output=True, text=True, timeout=30,
-            )
+            # This container gets attached to the project's network by
+            # Compose automatically - a standalone `docker run` for the
+            # helper doesn't join it on its own, so "mosquitto" wouldn't
+            # resolve inside the helper unless we explicitly reuse it.
+            my_network = subprocess.run(
+                ["docker", "inspect", "--format",
+                 "{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}", socket.gethostname()],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+
+            cmd = ["docker", "run", "-d", "--rm", "--name", "blynk-apply-helper"]
+            if my_network:
+                cmd += ["--network", my_network]
+            cmd += [
+                "-v", f"{CONFIG_BASE}:{CONFIG_BASE}",
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "-e", f"BLYNK_CONFIG_DIR={CONFIG_BASE}",
+                my_image,
+                "python3", "agent.py", "--apply-only", str(backup_path or ""),
+            ]
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if process.returncode != 0:
                 logger.error(f"Failed to launch apply helper: {process.stderr}")
                 return False
@@ -318,10 +327,39 @@ class ComposeManager:
             return False
 
 
+def publish_device_info_once(config: 'BlynkConfig', compose_manager: 'ComposeManager') -> None:
+    """One-shot connect/publish/disconnect, used by the detached apply
+    helper to report the actual outcome once it's known - the process that
+    hands off the update can't know yet whether it'll succeed or roll back."""
+    payload = {
+        "tmpl": config.template_id,
+        "ver": compose_manager.get_version() or "unknown",
+        "build": time.strftime("%b %d %Y %H:%M:%S"),
+        "type": config.template_id,
+        "rxbuff": 1024
+    }
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=KEEPALIVE)
+        client.loop_start()
+        info = client.publish(TOPIC_INFO, json.dumps(payload), qos=1)
+        info.wait_for_publish(timeout=5)
+        logger.info(f"Published device info (post-apply): {payload}")
+    except Exception as e:
+        logger.error(f"Failed to publish post-apply device info: {e}")
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
 def run_apply_only(backup_arg: str) -> None:
     compose_manager = ComposeManager()
+    config = BlynkConfig()
+    config.load()
+
     if compose_manager._run_docker_compose():
         logger.info("Detached apply succeeded")
+        publish_device_info_once(config, compose_manager)
         return
 
     logger.error("Detached apply failed, attempting rollback")
@@ -335,6 +373,7 @@ def run_apply_only(backup_arg: str) -> None:
         compose_manager._run_docker_compose()
     else:
         logger.error("No backup available to roll back to")
+    publish_device_info_once(config, compose_manager)
 
 
 class BlynkAgent:
@@ -406,9 +445,12 @@ class BlynkAgent:
 
         logger.info(f"Starting OTA update from: {url}")
         if self.compose_manager.update_from_url(url):
+            # Not confirmed successful yet - the detached helper (see
+            # run_apply_only) is the one that knows the real outcome, and
+            # publishes device info itself once it actually finishes.
+            # Publishing here would report the file's new version before
+            # it's actually running (or possibly about to be rolled back).
             logger.info("OTA update handed off for apply")
-            time.sleep(2)
-            self._publish_device_info()
         else:
             logger.error("OTA update failed")
 
