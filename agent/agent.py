@@ -46,6 +46,7 @@ TOPIC_OTA = "downlink/ota/json"
 TOPIC_PING = "downlink/ping"
 TOPIC_REBOOT = "downlink/reboot"
 TOPIC_REDIRECT = "downlink/redirect"
+TOPIC_RECONFIGURE = "downlink/reconfigure"
 TOPIC_INFO = "info/mcu"
 
 RECONNECT_DELAY = 1
@@ -113,11 +114,14 @@ class BlynkConfig:
 
     def save(self, env_path: Path = ENV_FILE) -> None:
         """Persist server/token/template_id to blynk.env - used once BLE
-        provisioning hands over a token (and possibly a new server)."""
+        provisioning hands over a token (and possibly a new server), or
+        when reconfigure/reset clears one back out. `or ''` matters here:
+        an unformatted None would write the literal text "None", which
+        reloads as a truthy non-empty string and defeats is_provisioned()."""
         env_path.write_text(
-            f"BLYNK_SERVER={self.server}\n"
-            f"BLYNK_TEMPLATE_ID={self.template_id}\n"
-            f"BLYNK_AUTH_TOKEN={self.auth_token}\n"
+            f"BLYNK_SERVER={self.server or ''}\n"
+            f"BLYNK_TEMPLATE_ID={self.template_id or ''}\n"
+            f"BLYNK_AUTH_TOKEN={self.auth_token or ''}\n"
         )
 
     def effective_server(self) -> str:
@@ -465,6 +469,8 @@ class BlynkAgent:
             self._handle_reboot(payload)
         elif message.topic == TOPIC_REDIRECT:
             self._handle_redirect(payload)
+        elif message.topic == TOPIC_RECONFIGURE:
+            self._handle_reconfigure(payload)
         else:
             logger.debug(f"Unhandled message on {message.topic}: {payload}")
 
@@ -505,6 +511,20 @@ class BlynkAgent:
                 f.write("b")
         except Exception as e:
             logger.error(f"Failed to trigger reboot: {e}")
+
+    def _handle_reconfigure(self, payload: str) -> None:
+        # Clear the token and exit - there's no live "drop back into BLE
+        # provisioning mid-run" path, so this relies on docker-compose's
+        # restart: unless-stopped to bring the container back up, at which
+        # point main() sees no stored token and starts BLE provisioning
+        # fresh, same as a brand new device.
+        logger.warning(f"Reconfigure requested via downlink/reconfigure: {payload!r}")
+        self.config.auth_token = None
+        self.config.save()
+        self._shutting_down = True
+        self.client.disconnect()
+        self.client.loop_stop()
+        sys.exit(0)
 
     def _handle_redirect(self, json_payload: str) -> None:
         try:
