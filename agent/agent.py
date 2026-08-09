@@ -22,6 +22,8 @@ from dotenv import dotenv_values
 import yaml
 import requests
 
+import ble_provisioning
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -46,7 +48,7 @@ TOPIC_REBOOT = "downlink/reboot"
 TOPIC_REDIRECT = "downlink/redirect"
 TOPIC_INFO = "info/mcu"
 
-RECONNECT_DELAY = 5
+RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
 KEEPALIVE = 60
 
@@ -87,16 +89,36 @@ class BlynkConfig:
 
     def load(self, env_path: Path = ENV_FILE) -> bool:
         values = dotenv_values(env_path) if env_path.exists() else {}
-        self.server = values.get("BLYNK_SERVER") or os.getenv("BLYNK_SERVER")
-        self.auth_token = values.get("BLYNK_AUTH_TOKEN") or os.getenv("BLYNK_AUTH_TOKEN")
-        self.template_id = values.get("BLYNK_TEMPLATE_ID") or os.getenv("BLYNK_TEMPLATE_ID")
+        self.server = values.get("BLYNK_SERVER") or os.getenv("BLYNK_SERVER") or None
+        self.auth_token = values.get("BLYNK_AUTH_TOKEN") or os.getenv("BLYNK_AUTH_TOKEN") or None
+        self.template_id = values.get("BLYNK_TEMPLATE_ID") or os.getenv("BLYNK_TEMPLATE_ID") or None
 
-        if not all([self.server, self.auth_token, self.template_id]):
-            logger.error("Missing BLYNK_SERVER / BLYNK_AUTH_TOKEN / BLYNK_TEMPLATE_ID")
+        # Server/token are optional here - a device shipped with no auth
+        # token is expected to get them later via BLE provisioning.
+        # Template ID identifies the product itself, not something the
+        # Blynk app hands over during provisioning, so it's still required
+        # up front.
+        if not self.template_id:
+            logger.error("Missing BLYNK_TEMPLATE_ID")
             return False
 
-        logger.info(f"Loaded configuration for server: {self.server}")
+        if self.is_provisioned():
+            logger.info(f"Loaded configuration for server: {self.server}")
+        else:
+            logger.info("No stored server/auth token - BLE provisioning required")
         return True
+
+    def is_provisioned(self) -> bool:
+        return bool(self.server and self.auth_token)
+
+    def save(self, env_path: Path = ENV_FILE) -> None:
+        """Persist server/token/template_id to blynk.env - used once BLE
+        provisioning hands over a token (and possibly a new server)."""
+        env_path.write_text(
+            f"BLYNK_SERVER={self.server}\n"
+            f"BLYNK_TEMPLATE_ID={self.template_id}\n"
+            f"BLYNK_AUTH_TOKEN={self.auth_token}\n"
+        )
 
     def effective_server(self) -> str:
         """The bridge host in effect right now - a downlink/redirect
@@ -108,9 +130,13 @@ class BlynkConfig:
         return self.server
 
 
+MOSQUITTO_CONTAINER = "blynk-mosquitto-1"  # docker-compose.yml's fixed `name: blynk` + service `mosquitto`, single instance
+
+
 class MosquittoBridge:
     """Renders the mosquitto bridge connection config and restarts the
-    mosquitto service (via the docker-compose project) when it changes."""
+    mosquitto container (by name, not via the docker-compose project -
+    see _restart_mosquitto) when it changes."""
 
     def __init__(self, config: BlynkConfig, compose_path: Path = COMPOSE_FILE):
         self.config = config
@@ -139,8 +165,19 @@ class MosquittoBridge:
     def _restart_mosquitto(self) -> None:
         try:
             process = subprocess.run(
-                ["docker", "compose", "-f", str(self.compose_path), "restart", "mosquitto"],
-                capture_output=True, text=True, timeout=60,
+                # Plain `docker restart`, not `docker compose restart`:
+                # confirmed on real hardware that the agent container's
+                # Alpine-packaged docker-cli-compose (v2.27.0) takes ~11s
+                # for this exact restart regardless of -t, vs. ~3.5s for
+                # the same command via the host's own compose plugin
+                # (v5.4.0) - a version-specific slowdown in compose's own
+                # restart path. The low-level engine call sidesteps it.
+                # -t 0 skips the graceful-shutdown wait too: mosquitto's
+                # persistence log tolerates abrupt termination fine, and
+                # there's nothing worth flushing at the point this fires
+                # (first provisioning, or an occasional bridge redirect).
+                ["docker", "restart", "-t", "0", MOSQUITTO_CONTAINER],
+                capture_output=True, text=True, timeout=30,
             )
             if process.returncode != 0:
                 logger.error(f"Failed to restart mosquitto: {process.stderr}")
@@ -532,7 +569,14 @@ def main():
 
     compose_manager = ComposeManager()
     bridge = MosquittoBridge(config)
-    bridge.ensure_current()
+
+    if config.is_provisioned():
+        bridge.ensure_current()
+    else:
+        logger.info("No auth token stored, starting BLE provisioning")
+        if not ble_provisioning.provision(config, compose_manager, bridge):
+            logger.error("BLE provisioning did not complete. Exiting.")
+            return
 
     agent = BlynkAgent(config, compose_manager, bridge)
     agent.run()

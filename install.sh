@@ -31,9 +31,12 @@ if [ ! -f "$STATE_DIR/blynk.env" ]; then
   # the keyboard - reading from /dev/tty explicitly is what makes these
   # prompts actually work rather than silently fail or hang.
   echo "Enter this device's Blynk credentials:"
-  read -r -p "BLYNK_SERVER (e.g. lon1.blynk.cloud): " BLYNK_SERVER </dev/tty
+  echo "(leave server/auth token blank to provision this device later via"
+  echo "the Blynk app over Bluetooth - template ID is still required now,"
+  echo "it identifies the product itself rather than something the app hands over)"
+  read -r -p "BLYNK_SERVER (e.g. lon1.blynk.cloud), or leave blank: " BLYNK_SERVER </dev/tty
   read -r -p "BLYNK_TEMPLATE_ID: " BLYNK_TEMPLATE_ID </dev/tty
-  read -r -s -p "BLYNK_AUTH_TOKEN: " BLYNK_AUTH_TOKEN </dev/tty
+  read -r -s -p "BLYNK_AUTH_TOKEN, or leave blank: " BLYNK_AUTH_TOKEN </dev/tty
   echo
   cat > "$STATE_DIR/blynk.env" <<EOF
 BLYNK_SERVER=$BLYNK_SERVER
@@ -41,6 +44,10 @@ BLYNK_TEMPLATE_ID=$BLYNK_TEMPLATE_ID
 BLYNK_AUTH_TOKEN=$BLYNK_AUTH_TOKEN
 EOF
   echo "Wrote $STATE_DIR/blynk.env"
+  if [ -z "$BLYNK_AUTH_TOKEN" ]; then
+    echo "No auth token entered - the agent will start in BLE provisioning mode"
+    echo "on first boot. Open the Blynk app and add this device to finish setup."
+  fi
 else
   echo "$STATE_DIR/blynk.env already exists, leaving it alone"
 fi

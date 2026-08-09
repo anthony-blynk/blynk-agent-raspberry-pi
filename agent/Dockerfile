@@ -12,6 +12,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
-COPY agent.py .
+COPY agent.py ble_provisioning.py ./
 
 CMD ["python3", "agent.py"]
