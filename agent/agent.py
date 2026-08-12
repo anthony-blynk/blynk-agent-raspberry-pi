@@ -7,6 +7,7 @@ docker-compose.yml and reacts to a few other downlink control topics.
 
 import json
 import logging
+import platform
 import time
 import subprocess
 import shutil
@@ -14,6 +15,7 @@ import signal
 import socket
 import sys
 import os
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -47,11 +49,13 @@ TOPIC_PING = "downlink/ping"
 TOPIC_REBOOT = "downlink/reboot"
 TOPIC_REDIRECT = "downlink/redirect"
 TOPIC_RECONFIGURE = "downlink/reconfigure"
+TOPIC_DIAGNOSTICS_ENABLED = "downlink/ds/AgentDiagnosticsEnabled"
 TOPIC_INFO = "info/mcu"
 
 RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
 KEEPALIVE = 60
+DIAGNOSTICS_INTERVAL = 60  # seconds between CPU/mem/disk/temp reports while enabled
 
 BRIDGE_TEMPLATE = """\
 connection blynk-cloud
@@ -417,6 +421,105 @@ def run_apply_only(backup_arg: str) -> None:
     publish_device_info_once(config, compose_manager)
 
 
+# Metadata (static facts, published once at startup) and diagnostics
+# (live metrics, published periodically) - all read directly from
+# /proc, /sys, and stdlib rather than a dependency like psutil, matching
+# how the rest of this codebase already reads /proc/cpuinfo etc directly.
+
+def _read_device_model() -> str:
+    try:
+        with open("/proc/device-tree/model") as f:
+            return f.read().strip("\x00\n")
+    except OSError:
+        return "unknown"
+
+
+def _read_os_pretty_name() -> str:
+    # /host/etc/os-release (see docker-compose.yml) is the real host OS -
+    # pid: host makes /proc reflect the host, but /etc/ is still this
+    # container's own Alpine image, so plain /etc/os-release would report
+    # "Alpine Linux" instead. Falls back if that mount isn't present.
+    for path in ("/host/etc/os-release", "/etc/os-release"):
+        try:
+            with open(path) as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        return line.split("=", 1)[1].strip().strip('"')
+        except OSError:
+            continue
+    return "unknown"
+
+
+def _read_mem_total_mb() -> Optional[float]:
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return None
+
+
+def _read_disk_total_gb() -> Optional[float]:
+    try:
+        stats = os.statvfs("/")
+        return stats.f_frsize * stats.f_blocks / (1024 ** 3)
+    except OSError:
+        return None
+
+
+def _read_cpu_usage_percent() -> Optional[float]:
+    # 1-minute load average / core count - an approximation (load average
+    # also counts processes waiting on I/O, not just CPU-bound ones), not
+    # an instantaneous reading, but sufficient for health/trend monitoring
+    # without needing a two-sample /proc/stat delta.
+    try:
+        with open("/proc/loadavg") as f:
+            load1 = float(f.read().split()[0])
+        cores = os.cpu_count() or 1
+        return min(load1 / cores * 100, 100.0)
+    except OSError:
+        return None
+
+
+def _read_mem_usage_percent() -> Optional[float]:
+    # MemAvailable, not MemFree - Linux uses "free" RAM aggressively for
+    # disk caching, so MemFree alone reads artificially low.
+    try:
+        values = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    values[key] = int(rest.split()[0])
+        total, available = values.get("MemTotal"), values.get("MemAvailable")
+        if not total or available is None:
+            return None
+        return (total - available) / total * 100
+    except OSError:
+        return None
+
+
+def _read_disk_usage_percent() -> Optional[float]:
+    try:
+        stats = os.statvfs("/")
+        return (stats.f_blocks - stats.f_bavail) / stats.f_blocks * 100
+    except OSError:
+        return None
+
+
+def _read_temperature_c() -> Optional[float]:
+    # thermal_zone0 is the common convention for "the main SoC sensor" on
+    # single-SoC boards (confirmed present on both Pi and Jetson), though
+    # it isn't universally guaranteed to be the CPU on every board.
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return int(f.read().strip()) / 1000
+    except OSError:
+        return None
+
+
 class BlynkAgent:
     """MQTT client against the local mosquitto broker only - no TLS, no
     cloud credentials here, those live entirely in the mosquitto bridge."""
@@ -430,6 +533,7 @@ class BlynkAgent:
         self._reconnect_count = 0
         self._shutting_down = False
         self.last_cloud_contact: Optional[float] = None
+        self.diagnostics_enabled = False  # until told otherwise via get/ds on connect
         self._setup_mqtt_client()
 
     def _setup_mqtt_client(self) -> None:
@@ -444,6 +548,11 @@ class BlynkAgent:
             logger.info(f"Connected to local broker at {MQTT_HOST}:{MQTT_PORT}")
             client.subscribe(TOPIC_DOWNLINK, qos=1)
             self._publish_device_info()
+            self._publish_system_info()
+            # Current on/off state lives in Blynk (a console Switch widget),
+            # not locally - fetch it rather than assume; the response
+            # arrives on TOPIC_DIAGNOSTICS_ENABLED, same as a live toggle.
+            client.publish("get/ds", "AgentDiagnosticsEnabled", qos=1)
         else:
             self._connected = False
             logger.error(f"Failed to connect to local broker: {reason_code}")
@@ -471,6 +580,8 @@ class BlynkAgent:
             self._handle_redirect(payload)
         elif message.topic == TOPIC_RECONFIGURE:
             self._handle_reconfigure(payload)
+        elif message.topic == TOPIC_DIAGNOSTICS_ENABLED:
+            self._handle_diagnostics_enabled(payload)
         else:
             logger.debug(f"Unhandled message on {message.topic}: {payload}")
 
@@ -555,6 +666,52 @@ class BlynkAgent:
         self.client.publish(TOPIC_INFO, json.dumps(payload), qos=1)
         logger.info(f"Published device info: {payload}")
 
+    def _publish_system_info(self) -> None:
+        """Static facts about the device, published once per connect (same
+        as _publish_device_info). Originally sent via meta/FIELD, since
+        semantically these describe what the device is rather than a
+        live-varying value - switched to plain datastreams (ds/FIELD)
+        after confirming with Blynk that dashboard widgets currently can't
+        display metadata fields at all, only datastreams."""
+        fields = {
+            "AgentDeviceModel": _read_device_model(),
+            "AgentOS": _read_os_pretty_name(),
+            "AgentKernel": platform.release(),
+            "AgentArchitecture": platform.machine(),
+        }
+        mem_total = _read_mem_total_mb()
+        if mem_total is not None:
+            fields["AgentTotalMemory"] = f"{mem_total:.0f} MB"
+        disk_total = _read_disk_total_gb()
+        if disk_total is not None:
+            fields["AgentTotalDisk"] = f"{disk_total:.1f} GB"
+
+        for name, value in fields.items():
+            self.client.publish(f"ds/{name}", value, qos=1)
+        logger.info(f"Published system info: {fields}")
+
+    def _handle_diagnostics_enabled(self, payload: str) -> None:
+        self.diagnostics_enabled = payload.strip() == "1"
+        logger.info(f"Diagnostics reporting {'enabled' if self.diagnostics_enabled else 'disabled'}")
+
+    def _publish_diagnostics(self) -> None:
+        metrics = {
+            "ds/AgentCPUUsage": _read_cpu_usage_percent(),
+            "ds/AgentMemUsage": _read_mem_usage_percent(),
+            "ds/AgentDiskUsage": _read_disk_usage_percent(),
+            "ds/AgentTemperature": _read_temperature_c(),
+        }
+        for topic, value in metrics.items():
+            if value is not None:
+                self.client.publish(topic, f"{value:.1f}", qos=1)
+        logger.debug(f"Published diagnostics: {metrics}")
+
+    def _diagnostics_loop(self) -> None:
+        while not self._shutting_down:
+            time.sleep(DIAGNOSTICS_INTERVAL)
+            if self.diagnostics_enabled and self._connected:
+                self._publish_diagnostics()
+
     def run(self) -> None:
         def signal_handler(signum, frame):
             self._shutting_down = True
@@ -564,6 +721,8 @@ class BlynkAgent:
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+
+        threading.Thread(target=self._diagnostics_loop, daemon=True).start()
 
         while not self._shutting_down:
             try:

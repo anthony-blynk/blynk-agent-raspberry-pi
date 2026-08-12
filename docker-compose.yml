@@ -21,12 +21,12 @@
 name: blynk
 
 x-stack:
-  version: "1.4.1"
+  version: "1.5.0"
 
 services:
   mosquitto:
     build: ./mosquitto
-    image: ghcr.io/anthony-blynk/blynk-mosquitto:1.4.1
+    image: ghcr.io/anthony-blynk/blynk-mosquitto:1.5.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:1883:1883"
@@ -37,7 +37,7 @@ services:
 
   agent:
     build: ./agent
-    image: ghcr.io/anthony-blynk/blynk-agent:1.4.1
+    image: ghcr.io/anthony-blynk/blynk-agent:1.5.0
     restart: unless-stopped
     depends_on:
       - mosquitto
@@ -53,6 +53,10 @@ services:
       # BLE provisioning talks to the host's BlueZ over D-Bus - privileged:
       # true above already covers the capability side of this.
       - /var/run/dbus:/var/run/dbus
+      # pid: host makes /proc reflect the real host, but the container's
+      # own /etc/ is still its own Alpine image - without this, metadata
+      # reporting would say "Alpine Linux" instead of the host's real OS.
+      - /etc/os-release:/host/etc/os-release:ro
 
   # user applications get added/removed/version-bumped here by OTA pushes:
   # vending-app:
