@@ -57,18 +57,18 @@ Live health metrics - CPU usage, memory usage, disk usage, temperature (`AgentCP
 
 To set it up, create these datastreams for the device's template: the six system-info fields above (String), `AgentCPUUsage`/`AgentMemUsage`/`AgentDiskUsage` (Double, 0-100), `AgentTemperature` (Double, 0-110), and `AgentDiagnosticsEnabled` (Integer, 0-1, with a Switch widget). Add Label/Gauge/History Graph widgets bound to whichever of these you want visible on the dashboard.
 
-## Remote terminal (optional, off by default)
+## Remote terminal (on by default while this is a demo project)
 
 Blynk's [Terminal widget](https://docs.blynk.io/en/blynk.console/widgets-console/terminal) can give you a real shell on the device, entirely over the same outbound connection the agent already uses - no inbound port, no VPN, nothing exposed to the network beyond what's already there for Blynk itself. Commands run via `nsenter` into the host's own namespaces, so `pwd`/`ls`/`ps`/etc. reflect the actual Pi, not just the agent's own container.
 
-This is a real shell with real access, so it's off by default and behind two independent switches rather than one:
+This is a real shell with real access, so it's behind two independent switches rather than one:
 
-- **Capability** - a `docker-compose.yml` environment variable (`AGENT_TERMINAL_ENABLED=true` on the `agent` service), only changeable via an OTA push or a manual edit on the device itself. This is deliberate: compromising your Blynk account credentials alone should never be enough to get a shell on a device that never had this turned on - that requires a second, harder action. Left out of the tracked `docker-compose.yml` on purpose, so a normal install/update never enables it fleet-wide; add it per-device the same way you'd add your own service (see [Updating](#updating)).
-- **Session** - a Switch widget bound to an `AgentTerminalEnabled` datastream, for quick on/off without needing an OTA push every time you actually want to use it.
+- **Capability** - a `docker-compose.yml` environment variable (`AGENT_TERMINAL_ENABLED` on the `agent` service), only changeable via an OTA push or a manual edit on the device itself. This is deliberate: compromising your Blynk account credentials alone should never be enough to get a shell on a device that never had this turned on - that requires a second, harder action. **Currently defaults to `true` in the tracked `docker-compose.yml`**, so the feature is obvious and easy to try while this project is still a demo with no production fleets - set it to `false` (or remove the line) for any device you don't want this on at all, since at that point no Switch toggle in Blynk can turn it back on without an OTA push or a manual edit here.
+- **Session** - a Switch widget bound to an `AgentTerminalEnabled` datastream, for quick on/off without needing an OTA push every time you actually want to use it. This is the one that matters day to day - turn it off when you're not actively using the terminal.
 
-Both need to be on for commands to run; if the session switch is off, the terminal replies with `[terminal disabled]` instead of silently doing nothing.
+Both need to be on for commands to run - the terminal always replies with a `[terminal disabled: ...]` message explaining which one is off, rather than silently doing nothing either way.
 
-To set it up, create two datastreams for the device's template - `AgentTerminal` (String, with a Terminal widget) and `AgentTerminalEnabled` (Integer, 0-1, with a Switch widget) - then add `AGENT_TERMINAL_ENABLED=true` under the `agent` service's `environment:` in your device's deployed `docker-compose.yml`.
+To set it up, create two datastreams for the device's template - `AgentTerminal` (String, with a Terminal widget) and `AgentTerminalEnabled` (Integer, 0-1, with a Switch widget). The capability itself is already on by default (see above); flip the Switch widget on when you want to actually use it.
 
 ## Updating
 

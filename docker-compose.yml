@@ -21,12 +21,12 @@
 name: blynk
 
 x-stack:
-  version: "1.6.0"
+  version: "1.6.1"
 
 services:
   mosquitto:
     build: ./mosquitto
-    image: ghcr.io/anthony-blynk/blynk-mosquitto:1.6.0
+    image: ghcr.io/anthony-blynk/blynk-mosquitto:1.6.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:1883:1883"
@@ -37,7 +37,7 @@ services:
 
   agent:
     build: ./agent
-    image: ghcr.io/anthony-blynk/blynk-agent:1.6.0
+    image: ghcr.io/anthony-blynk/blynk-agent:1.6.1
     restart: unless-stopped
     depends_on:
       - mosquitto
@@ -47,6 +47,15 @@ services:
       - BLYNK_CONFIG_DIR=/opt/blynk
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
+      # On by default while this is a demo project (no production fleets
+      # yet) so the remote-terminal feature is obvious and easy to try -
+      # see the README's "Remote terminal" section. This is a capability
+      # gate, not the on/off control: a console Switch widget bound to
+      # AgentTerminalEnabled is still required too. Set to false (or
+      # remove this line) to turn the capability off for a device
+      # entirely - at that point no Switch toggle can turn it back on
+      # without an OTA push or a manual edit here.
+      - AGENT_TERMINAL_ENABLED=true
     volumes:
       - /opt/blynk:/opt/blynk
       - /var/run/docker.sock:/var/run/docker.sock

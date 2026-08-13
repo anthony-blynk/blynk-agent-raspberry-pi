@@ -601,8 +601,19 @@ class BlynkAgent:
             self._handle_diagnostics_enabled(payload)
         elif message.topic == TOPIC_TERMINAL_ENABLED and TERMINAL_CAPABILITY_ENABLED:
             self._handle_terminal_enabled(payload)
-        elif message.topic == TOPIC_TERMINAL and TERMINAL_CAPABILITY_ENABLED:
-            self._handle_terminal_command(payload)
+        elif message.topic == TOPIC_TERMINAL:
+            if TERMINAL_CAPABILITY_ENABLED:
+                self._handle_terminal_command(payload)
+            else:
+                # Distinct from _handle_terminal_command's own "[terminal
+                # disabled]" (that one means the session switch is off;
+                # this means the capability itself isn't - typing a
+                # command previously did nothing visible here at all).
+                self.client.publish(
+                    "ds/AgentTerminal",
+                    "[terminal disabled: set AGENT_TERMINAL_ENABLED=true in docker-compose.yml]",
+                    qos=1,
+                )
         else:
             logger.debug(f"Unhandled message on {message.topic}: {payload}")
 
