@@ -49,6 +49,27 @@ flowchart LR
 - You can add your own service(s) to `docker-compose.yml` alongside mosquitto and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
 - Blynk's own topics (`ds/#`, `downlink/#`, etc. - see [the MQTT API docs](https://docs.blynk.io/en/blynk.cloud-mqtt-api/device-mqtt-api/topic-structure)) are what actually reach Blynk Cloud through the bridge. Your apps are free to use any other topics on the local broker too - those just stay local and never interact with Blynk at all.
 
+## Diagnostics and system info
+
+At startup, the agent publishes static system facts as datastreams: device model, OS, kernel version, architecture, total memory, total disk (`AgentDeviceModel`, `AgentOS`, `AgentKernel`, `AgentArchitecture`, `AgentTotalMemory`, `AgentTotalDisk`). These are plain datastreams rather than Blynk's metadata fields - metadata is the better semantic fit for static facts like these, but dashboard widgets currently can't display metadata fields, only datastreams, so datastreams are what's actually usable on the dashboard.
+
+Live health metrics - CPU usage, memory usage, disk usage, temperature (`AgentCPUUsage`, `AgentMemUsage`, `AgentDiskUsage`, `AgentTemperature`) - report every 60s while enabled via a console Switch widget bound to an `AgentDiagnosticsEnabled` datastream. The agent asks Blynk for the current on/off state each time it (re)starts rather than assuming it's off, so a restarted agent picks back up whatever you last set rather than silently going quiet. All metrics are read directly from `/proc`, `/sys`, and Python's standard library - no extra dependency.
+
+To set it up, create these datastreams for the device's template: the six system-info fields above (String), `AgentCPUUsage`/`AgentMemUsage`/`AgentDiskUsage` (Double, 0-100), `AgentTemperature` (Double, 0-110), and `AgentDiagnosticsEnabled` (Integer, 0-1, with a Switch widget). Add Label/Gauge/History Graph widgets bound to whichever of these you want visible on the dashboard.
+
+## Remote terminal (optional, off by default)
+
+Blynk's [Terminal widget](https://docs.blynk.io/en/blynk.console/widgets-console/terminal) can give you a real shell on the device, entirely over the same outbound connection the agent already uses - no inbound port, no VPN, nothing exposed to the network beyond what's already there for Blynk itself. Commands run via `nsenter` into the host's own namespaces, so `pwd`/`ls`/`ps`/etc. reflect the actual Pi, not just the agent's own container.
+
+This is a real shell with real access, so it's off by default and behind two independent switches rather than one:
+
+- **Capability** - a `docker-compose.yml` environment variable (`AGENT_TERMINAL_ENABLED=true` on the `agent` service), only changeable via an OTA push or a manual edit on the device itself. This is deliberate: compromising your Blynk account credentials alone should never be enough to get a shell on a device that never had this turned on - that requires a second, harder action. Left out of the tracked `docker-compose.yml` on purpose, so a normal install/update never enables it fleet-wide; add it per-device the same way you'd add your own service (see [Updating](#updating)).
+- **Session** - a Switch widget bound to an `AgentTerminalEnabled` datastream, for quick on/off without needing an OTA push every time you actually want to use it.
+
+Both need to be on for commands to run; if the session switch is off, the terminal replies with `[terminal disabled]` instead of silently doing nothing.
+
+To set it up, create two datastreams for the device's template - `AgentTerminal` (String, with a Terminal widget) and `AgentTerminalEnabled` (Integer, 0-1, with a Switch widget) - then add `AGENT_TERMINAL_ENABLED=true` under the `agent` service's `environment:` in your device's deployed `docker-compose.yml`.
+
 ## Updating
 
 Updates go through Blynk OTA, not by re-running `install.sh`. Grab the latest [`docker-compose.yml`](docker-compose.yml) (merging in your own additions if you've customized it) and upload it through your Blynk console's OTA feature for that device.

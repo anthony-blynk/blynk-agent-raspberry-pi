@@ -43,6 +43,17 @@ BRIDGE_HOST_OVERRIDE_FILE = CONFIG_BASE / "bridge_host_override"
 MQTT_HOST = os.getenv("MQTT_HOST", "mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 
+# Capability gate, not a runtime toggle - deliberately only settable via
+# docker-compose.yml (i.e. an OTA push), not from Blynk. Compromising the
+# Blynk account alone should never be enough to get a shell on a device
+# that never had this turned on; that requires a second, harder action
+# (pushing a valid OTA update). Absent from the tracked docker-compose.yml
+# on purpose - this is a per-device opt-in (see the camera-detector
+# example for the same pattern), not something the whole fleet gets by
+# default from a normal install/update.
+TERMINAL_CAPABILITY_ENABLED = os.getenv("AGENT_TERMINAL_ENABLED", "false").lower() == "true"
+TERMINAL_COMMAND_TIMEOUT = 60  # seconds - long enough for things like `apt update`, not unbounded
+
 TOPIC_DOWNLINK = "downlink/#"
 TOPIC_OTA = "downlink/ota/json"
 TOPIC_PING = "downlink/ping"
@@ -50,6 +61,8 @@ TOPIC_REBOOT = "downlink/reboot"
 TOPIC_REDIRECT = "downlink/redirect"
 TOPIC_RECONFIGURE = "downlink/reconfigure"
 TOPIC_DIAGNOSTICS_ENABLED = "downlink/ds/AgentDiagnosticsEnabled"
+TOPIC_TERMINAL_ENABLED = "downlink/ds/AgentTerminalEnabled"
+TOPIC_TERMINAL = "downlink/ds/AgentTerminal"
 TOPIC_INFO = "info/mcu"
 
 RECONNECT_DELAY = 1
@@ -534,6 +547,8 @@ class BlynkAgent:
         self._shutting_down = False
         self.last_cloud_contact: Optional[float] = None
         self.diagnostics_enabled = False  # until told otherwise via get/ds on connect
+        self.terminal_session_enabled = False  # the fast on/off switch, on top of TERMINAL_CAPABILITY_ENABLED
+        self._terminal_lock = threading.Lock()  # one command's output at a time - see _run_terminal_command
         self._setup_mqtt_client()
 
     def _setup_mqtt_client(self) -> None:
@@ -553,6 +568,8 @@ class BlynkAgent:
             # not locally - fetch it rather than assume; the response
             # arrives on TOPIC_DIAGNOSTICS_ENABLED, same as a live toggle.
             client.publish("get/ds", "AgentDiagnosticsEnabled", qos=1)
+            if TERMINAL_CAPABILITY_ENABLED:
+                client.publish("get/ds", "AgentTerminalEnabled", qos=1)
         else:
             self._connected = False
             logger.error(f"Failed to connect to local broker: {reason_code}")
@@ -582,6 +599,10 @@ class BlynkAgent:
             self._handle_reconfigure(payload)
         elif message.topic == TOPIC_DIAGNOSTICS_ENABLED:
             self._handle_diagnostics_enabled(payload)
+        elif message.topic == TOPIC_TERMINAL_ENABLED and TERMINAL_CAPABILITY_ENABLED:
+            self._handle_terminal_enabled(payload)
+        elif message.topic == TOPIC_TERMINAL and TERMINAL_CAPABILITY_ENABLED:
+            self._handle_terminal_command(payload)
         else:
             logger.debug(f"Unhandled message on {message.topic}: {payload}")
 
@@ -711,6 +732,58 @@ class BlynkAgent:
             time.sleep(DIAGNOSTICS_INTERVAL)
             if self.diagnostics_enabled and self._connected:
                 self._publish_diagnostics()
+
+    def _handle_terminal_enabled(self, payload: str) -> None:
+        self.terminal_session_enabled = payload.strip() == "1"
+        logger.warning(f"Terminal session {'enabled' if self.terminal_session_enabled else 'disabled'}")
+
+    def _handle_terminal_command(self, command: str) -> None:
+        if not self.terminal_session_enabled:
+            self.client.publish("ds/AgentTerminal", "[terminal disabled]", qos=1)
+            return
+        # Runs in its own thread, not inline on the MQTT network thread -
+        # a slow/hanging command shouldn't stall ping/reboot/OTA handling
+        # for everyone else while it runs.
+        threading.Thread(target=self._run_terminal_command, args=(command,), daemon=True).start()
+
+    def _run_terminal_command(self, command: str) -> None:
+        # Each command runs in its own thread (see _handle_terminal_command)
+        # so a second command typed before the first finishes doesn't stall
+        # behind it - but both would otherwise publish chunked output to
+        # the same topic concurrently and interleave/garble on screen. The
+        # lock only serializes execution+publishing, not the incoming
+        # subscription, so a second command just waits its turn instead of
+        # racing the first one's output.
+        with self._terminal_lock:
+            logger.warning(f"Terminal command executed via Blynk: {command!r}")
+            try:
+                result = subprocess.run(
+                    # nsenter into PID 1's namespaces - pid: host already
+                    # makes PID 1 here genuinely the host's real init, but
+                    # this container's own mount/network namespaces are
+                    # still its own. Without this, commands only ever see
+                    # the agent's own isolated filesystem (e.g. `ls`
+                    # showing /app's contents instead of the real host's).
+                    ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid",
+                     "--", "sh", "-c", command],
+                    capture_output=True, text=True, timeout=TERMINAL_COMMAND_TIMEOUT,
+                )
+                output = (result.stdout + result.stderr).strip() or "(no output)"
+            except subprocess.TimeoutExpired as e:
+                # capture_output still populates these on the exception with
+                # whatever the process had produced before being killed -
+                # show it rather than discarding it, the command may have
+                # gotten most of the way there.
+                partial = ((e.stdout or "") + (e.stderr or "")).strip()
+                output = f"(timed out after {TERMINAL_COMMAND_TIMEOUT}s)"
+                if partial:
+                    output += f"\n{partial}"
+            except Exception as e:
+                output = f"(error: {e})"
+
+            # Terminal widget messages are capped at 255 chars - chunk longer output.
+            for i in range(0, len(output), 255):
+                self.client.publish("ds/AgentTerminal", output[i:i + 255], qos=1)
 
     def run(self) -> None:
         def signal_handler(signum, frame):
