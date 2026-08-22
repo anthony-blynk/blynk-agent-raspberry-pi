@@ -111,6 +111,22 @@ class FastAdvertisement(Advertisement):
     def MaxInterval(self) -> "u":  # type: ignore
         return self.ADVERTISING_INTERVAL_MS
 
+    _tx_power = 0  # class-level default; overwritten per-instance by BlueZ's own setter call below
+
+    @dbus_property(PropertyAccess.READWRITE)
+    def TxPower(self) -> "n":  # type: ignore
+        # Also missing from bluez-peripheral 0.1.7's Advertisement - a
+        # newer BlueZ (confirmed on a CompuLab IOT-GATE-iMX8 after an OS
+        # update) queries this during registration and logs a "does not
+        # have property" DBusError when absent, then writes to it
+        # (presumably reporting the negotiated/actual transmit power back)
+        # so it needs to be genuinely settable, not just readable.
+        return self._tx_power
+
+    @TxPower.setter
+    def TxPower(self, value: "n") -> None:  # type: ignore
+        self._tx_power = value
+
 
 class ProvisioningService(Service):
     def __init__(self, on_rx):
