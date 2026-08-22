@@ -282,11 +282,20 @@ class ProvisioningSession:
             except asyncio.TimeoutError:
                 logger.error("BLE provisioning timed out waiting for the app")
 
-            await self.service.unregister()
-            await agent.unregister(bus)
-            # Advertisement has no public unregister in this library version -
-            # disconnecting the bus makes bluez notice the peer is gone and
-            # clean up the LEAdvertisement1 registration itself.
+            try:
+                await self.service.unregister()
+                await agent.unregister(bus)
+                # Advertisement has no public unregister in this library
+                # version - disconnecting the bus makes bluez notice the
+                # peer is gone and clean up the LEAdvertisement1
+                # registration itself.
+            except Exception as e:
+                # Confirmed on real hardware: bluetoothd can drop off the
+                # D-Bus system bus right around here (device/BlueZ-version
+                # specific) and this raises even though provisioning itself
+                # already succeeded - self._result already reflects the
+                # real outcome, so a cleanup hiccup shouldn't overturn it.
+                logger.warning(f"BLE cleanup after provisioning: {e}")
         finally:
             bus.disconnect()
 

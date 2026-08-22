@@ -16,6 +16,24 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 0
 fi
 
+if ! docker compose version >/dev/null 2>&1; then
+  # docker existing doesn't mean `docker compose` does - confirmed on a
+  # CompuLab IOT-GATE-iMX8 pre-installed with Microsoft's Azure IoT Edge
+  # "moby-engine" Docker build, which ships docker itself but not the
+  # compose v2 plugin, and whose own apt repo doesn't carry
+  # docker-compose-plugin either. Installing the standalone plugin binary
+  # directly fixes this without touching the existing docker install.
+  echo "docker compose not found - installing the compose plugin..."
+  mkdir -p "$HOME/.docker/cli-plugins"
+  curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
+    -o "$HOME/.docker/cli-plugins/docker-compose"
+  chmod +x "$HOME/.docker/cli-plugins/docker-compose"
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "Failed to install docker compose automatically - install it manually and re-run this script."
+    exit 1
+  fi
+fi
+
 sudo mkdir -p "$STATE_DIR/backups" "$STATE_DIR/mosquitto/conf.d"
 sudo chown -R "$USER":"$USER" "$STATE_DIR"
 
