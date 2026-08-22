@@ -16,6 +16,21 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 0
 fi
 
+if ! docker info >/dev/null 2>&1; then
+  # docker existing doesn't mean this user can actually talk to the daemon
+  # - confirmed on both a Jetson and a freshly re-imaged CompuLab
+  # IOT-GATE-iMX8, where a pre-installed Docker never added the invoking
+  # user to the `docker` group at all (that only happens above, in the
+  # branch where this script installs Docker itself). `docker compose
+  # version` below doesn't catch this - it only checks the plugin's own
+  # version, not daemon connectivity - so this needs its own check.
+  echo "Can't talk to the Docker daemon as this user - adding to the docker group..."
+  sudo usermod -aG docker "$USER"
+  echo "Added. Log out and back in (group membership needs a new session), then re-run:"
+  echo "  curl -fsSL $RAW_BASE/install.sh | bash"
+  exit 0
+fi
+
 if ! docker compose version >/dev/null 2>&1; then
   # docker existing doesn't mean `docker compose` does - confirmed on a
   # CompuLab IOT-GATE-iMX8 pre-installed with Microsoft's Azure IoT Edge
