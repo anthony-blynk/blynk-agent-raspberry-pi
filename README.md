@@ -45,9 +45,15 @@ flowchart LR
 - **mosquitto** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
 - **mosquitto** bridges the local broker to Blynk Cloud. Only mosquitto holds the Blynk auth token (for that cloud bridge connection) - anything else on the Pi just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
 - That local broker is only reachable on the Pi itself (`127.0.0.1:1883`) - nothing outside the Pi can connect to it.
-- **agent** subscribes to Blynk's downlink control topics: `downlink/ota/json` (downloads, validates, and applies a new `docker-compose.yml`, with automatic rollback on failure), `downlink/ping`, `downlink/reboot`, and `downlink/redirect`.
+- **agent** subscribes to Blynk's downlink control topics: `downlink/ota/json` (downloads, validates, and applies a new `docker-compose.yml`, with automatic rollback on failure), `downlink/ping`, `downlink/reboot`, `downlink/redirect`, and `downlink/reconfigure`.
 - You can add your own service(s) to `docker-compose.yml` alongside mosquitto and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
 - Blynk's own topics (`ds/#`, `downlink/#`, etc. - see [the MQTT API docs](https://docs.blynk.io/en/blynk.cloud-mqtt-api/device-mqtt-api/topic-structure)) are what actually reach Blynk Cloud through the bridge. Your apps are free to use any other topics on the local broker too - those just stay local and never interact with Blynk at all.
+
+## WiFi provisioning
+
+A device with no stored Blynk auth token (`blynk.env` left blank during `install.sh`, or after a `downlink/reconfigure`) advertises over Bluetooth LE and runs the Blynk app's provisioning flow ("Blynk.Inject"): the app scans, connects, requests the device's real network interfaces, and - for a WiFi interface - requests a scan and lets the user pick an SSID, enter a password, and optionally set a static IP. The device configures WiFi and the Blynk connection through NetworkManager over D-Bus (the host's, not the container's own - reached over the same D-Bus socket already used for BlueZ), reporting live status back over the same BLE link the whole time, including specific failure reasons (e.g. a wrong password) so the app can prompt for corrected credentials without needing to reconnect.
+
+If a previously-provisioned device later loses connectivity for a sustained period (WiFi credentials changed at the router, for example), it automatically re-enters this same BLE provisioning flow **in place** - without a reboot, and without discarding the already-stored Blynk auth token - so the app only needs to supply corrected network info. This is checked roughly every minute against `$SYS/broker/connection/blynk-bridge-{template_id}/state` (mosquitto's own bridge connection-state notification), and only triggers after the bridge has been down continuously for several minutes, to ride out brief blips rather than reprovisioning on the first hiccup.
 
 ## Diagnostics and system info
 

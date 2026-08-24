@@ -70,6 +70,14 @@ MAX_RECONNECT_DELAY = 60
 KEEPALIVE = 60
 DIAGNOSTICS_INTERVAL = 60  # seconds between CPU/mem/disk/temp reports while enabled
 
+# How long the Blynk cloud bridge can stay down before this device falls
+# back into BLE provisioning in place (see BlynkAgent._check_connectivity_watchdog)
+# to let the app supply corrected network info. Long enough to ride out a
+# brief WiFi blip or router reboot, short enough to actually recover from a
+# real outage - unlike the Arduino Edgent reference's retry-forever-for-
+# hours loop, which never re-enters provisioning automatically at all.
+BRIDGE_DISCONNECT_GRACE_PERIOD = 300
+
 BRIDGE_TEMPLATE = """\
 connection blynk-cloud
 address {server}:8883
@@ -82,7 +90,11 @@ remote_password {token}
 remote_clientid blynk-bridge-{template_id}
 bridge_cafile /etc/ssl/certs/ca-certificates.crt
 cleansession true
-notifications false
+# Published locally (retained) to $SYS/broker/connection/<remote_clientid>/state
+# on state change - the connectivity watchdog subscribes to this to learn
+# the cloud bridge is down, distinctly from this container's own local
+# broker connection (which stays up regardless of WiFi/cloud state).
+notifications true
 try_private false
 
 topic downlink/# in 1
@@ -547,6 +559,12 @@ class BlynkAgent:
         self._shutting_down = False
         self.last_cloud_contact: Optional[float] = None
         self.diagnostics_enabled = False  # until told otherwise via get/ds on connect
+        # Mirrors BRIDGE_TEMPLATE's remote_clientid - see the notifications
+        # comment there for why this topic tells us the cloud bridge's own
+        # connection state, not just this container's local-broker link.
+        self._bridge_state_topic = f"$SYS/broker/connection/blynk-bridge-{config.template_id}/state"
+        self._bridge_disconnected_since: Optional[float] = None
+        self._reprovisioning = False
         self.terminal_session_enabled = False  # the fast on/off switch, on top of TERMINAL_CAPABILITY_ENABLED
         self._terminal_lock = threading.Lock()  # one command's output at a time - see _run_terminal_command
         self._setup_mqtt_client()
@@ -562,6 +580,7 @@ class BlynkAgent:
             self._reconnect_count = 0
             logger.info(f"Connected to local broker at {MQTT_HOST}:{MQTT_PORT}")
             client.subscribe(TOPIC_DOWNLINK, qos=1)
+            client.subscribe(self._bridge_state_topic, qos=1)
             self._publish_device_info()
             self._publish_system_info()
             # Current on/off state lives in Blynk (a console Switch widget),
@@ -599,6 +618,8 @@ class BlynkAgent:
             self._handle_reconfigure(payload)
         elif message.topic == TOPIC_DIAGNOSTICS_ENABLED:
             self._handle_diagnostics_enabled(payload)
+        elif message.topic == self._bridge_state_topic:
+            self._handle_bridge_state(payload)
         elif message.topic == TOPIC_TERMINAL_ENABLED and TERMINAL_CAPABILITY_ENABLED:
             self._handle_terminal_enabled(payload)
         elif message.topic == TOPIC_TERMINAL:
@@ -668,6 +689,79 @@ class BlynkAgent:
         self.client.disconnect()
         self.client.loop_stop()
         sys.exit(0)
+
+    def _handle_bridge_state(self, payload: str) -> None:
+        connected = payload.strip() == "1"
+        if connected:
+            if self._bridge_disconnected_since is not None:
+                logger.info("Blynk cloud bridge reconnected")
+            self._bridge_disconnected_since = None
+        elif self._bridge_disconnected_since is None:
+            self._bridge_disconnected_since = time.time()
+            logger.warning("Blynk cloud bridge disconnected")
+
+    def _check_connectivity_watchdog(self) -> None:
+        # Ticked from _diagnostics_loop's existing 60s cadence rather than a
+        # dedicated thread - the bridge-state notification above is only
+        # republished on a real state change (mosquitto's notifications
+        # feature is retained-on-change, not periodic), so something has to
+        # poll elapsed time against BRIDGE_DISCONNECT_GRACE_PERIOD.
+        if self._bridge_disconnected_since is None or self._reprovisioning:
+            return
+        outage = time.time() - self._bridge_disconnected_since
+        if outage < BRIDGE_DISCONNECT_GRACE_PERIOD:
+            return
+        logger.warning(
+            f"Blynk cloud bridge has been down for {int(outage)}s - re-entering BLE "
+            "provisioning in place so the app can supply corrected network info, "
+            "without discarding the stored Blynk token"
+        )
+        self._start_reprovisioning()
+
+    def _start_reprovisioning(self) -> None:
+        # Unlike _handle_reconfigure, this keeps the Blynk token and
+        # existing network config intact - it only reopens BLE provisioning
+        # in place so the app can supply corrected WiFi info. Mirrors the
+        # more capable of the two Blynk Edgent reference implementations
+        # (ESP-IDF), which re-enters provisioning without discarding what's
+        # already proven to work. ble_provisioning.provision() is a
+        # blocking asyncio.run() call, so it needs its own thread - the
+        # MQTT loop_forever() driving this agent keeps running unaffected
+        # meanwhile, since it only ever talks to the local broker, not the
+        # cloud directly.
+        self._reprovisioning = True
+        threading.Thread(target=self._run_reprovisioning, daemon=True).start()
+
+    def _run_reprovisioning(self) -> None:
+        try:
+            succeeded = ble_provisioning.provision(
+                self.config, self.compose_manager, self.bridge, reprovisioning=True
+            )
+        except Exception as e:
+            logger.error(f"In-place reprovisioning attempt failed: {e}")
+            succeeded = False
+        finally:
+            self._reprovisioning = False
+            if succeeded:
+                self._bridge_disconnected_since = None
+            else:
+                # Still down and no one supplied corrected config in that
+                # session (e.g. it timed out unattended) - or so we assume.
+                # The outage could just as easily have resolved itself
+                # while this unattended session was running (WiFi/ISP came
+                # back on its own with no one around to reconfigure
+                # anything) - mosquitto's bridge-state notification only
+                # republishes on an actual change, so if it already
+                # flipped back to connected while we were busy advertising,
+                # nothing would otherwise tell us. Re-subscribing forces
+                # mosquitto to redeliver the *current* retained value, so
+                # we check reality again instead of blindly re-arming the
+                # clock and looping into another pointless advertising
+                # window forever even after the device is actually fine.
+                self.client.subscribe(self._bridge_state_topic, qos=1)
+                time.sleep(2)
+                if self._bridge_disconnected_since is not None:
+                    self._bridge_disconnected_since = time.time()
 
     def _handle_redirect(self, json_payload: str) -> None:
         try:
@@ -743,6 +837,7 @@ class BlynkAgent:
             time.sleep(DIAGNOSTICS_INTERVAL)
             if self.diagnostics_enabled and self._connected:
                 self._publish_diagnostics()
+            self._check_connectivity_watchdog()
 
     def _handle_terminal_enabled(self, payload: str) -> None:
         self.terminal_session_enabled = payload.strip() == "1"
@@ -784,8 +879,14 @@ class BlynkAgent:
                 # capture_output still populates these on the exception with
                 # whatever the process had produced before being killed -
                 # show it rather than discarding it, the command may have
-                # gotten most of the way there.
-                partial = ((e.stdout or "") + (e.stderr or "")).strip()
+                # gotten most of the way there. Despite text=True, CPython
+                # leaves these as raw bytes on the TimeoutExpired path
+                # specifically (only the normal-return path decodes them) -
+                # confirmed on real hardware via `docker logs -f`, which
+                # always hits this timeout since -f never terminates.
+                def _decode(value):
+                    return value.decode(errors="replace") if isinstance(value, bytes) else (value or "")
+                partial = (_decode(e.stdout) + _decode(e.stderr)).strip()
                 output = f"(timed out after {TERMINAL_COMMAND_TIMEOUT}s)"
                 if partial:
                     output += f"\n{partial}"
