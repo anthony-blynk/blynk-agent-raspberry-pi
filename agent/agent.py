@@ -175,7 +175,7 @@ class MosquittoBridge:
         self.config = config
         self.compose_path = compose_path
 
-    def ensure_current(self, server_override: Optional[str] = None) -> None:
+    def ensure_current(self, server_override: Optional[str] = None, force_restart: bool = False) -> None:
         server = server_override or self.config.effective_server()
         rendered = BRIDGE_TEMPLATE.format(
             server=server,
@@ -184,11 +184,25 @@ class MosquittoBridge:
         )
 
         BRIDGE_CONF_DIR.mkdir(parents=True, exist_ok=True)
-        if BRIDGE_CONF_FILE.exists() and BRIDGE_CONF_FILE.read_text() == rendered:
+        unchanged = BRIDGE_CONF_FILE.exists() and BRIDGE_CONF_FILE.read_text() == rendered
+        if unchanged and not force_restart:
             return
 
-        BRIDGE_CONF_FILE.write_text(rendered)
-        logger.info(f"Bridge config updated for {server}, restarting mosquitto")
+        if unchanged:
+            # force_restart=True after a real WiFi (re)connect, even though
+            # the bridge conf content itself didn't change - confirmed on
+            # real hardware that mosquitto's container keeps whatever DNS
+            # server Docker generated its resolv.conf from at container
+            # start, and never re-reads the host's current one. Switching
+            # WiFi networks with a different DNS server (e.g. moving a
+            # device between locations) left the bridge permanently unable
+            # to resolve the Blynk host, even though the host itself, and
+            # WiFi, were both fine - only a container restart picks up the
+            # host's current resolver.
+            logger.info(f"Bridge config unchanged for {server}, restarting mosquitto anyway after a WiFi (re)connect")
+        else:
+            BRIDGE_CONF_FILE.write_text(rendered)
+            logger.info(f"Bridge config updated for {server}, restarting mosquitto")
         self._restart_mosquitto()
 
     def apply_redirect(self, new_server: str) -> None:

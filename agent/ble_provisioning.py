@@ -555,8 +555,15 @@ class ProvisioningSession:
         # and blocks for however long that takes (confirmed on real
         # hardware: ~12s) - running it inline would freeze this whole
         # asyncio loop, so no BLE notification (including the ones just
-        # below) would go out until it finished.
-        await asyncio.get_event_loop().run_in_executor(None, self.bridge.ensure_current)
+        # below) would go out until it finished. force_restart when a real
+        # WiFi (re)connect just happened - confirmed on real hardware that
+        # mosquitto's container can be left unable to resolve the Blynk
+        # host after a WiFi network change even when the bridge conf
+        # content itself is unchanged (e.g. moving between two networks
+        # with different DNS servers, same Blynk server/token either way).
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self.bridge.ensure_current(force_restart=bool(ssid))
+        )
 
         self.service.send({"t": "status", "s": "connected"})
         await asyncio.sleep(0.3)  # let the notification flush before the link drops
