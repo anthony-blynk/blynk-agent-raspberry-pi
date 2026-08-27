@@ -1,0 +1,61 @@
+# Custom rpi-image-gen layer - stages this project's stack and pre-caches
+# the agent/mosquitto images so the built image needs zero network to
+# reach a working BLE-advertising state on first real boot.
+#
+# METABEGIN
+# X-Env-Layer-Name: blynk-agent
+# X-Env-Layer-Desc: Blynk Agent stack (mosquitto + agent), pre-configured and pre-cached
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: general
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - skopeo   # pulls/caches images without needing a running Docker daemon during the build
+
+  customize-hooks:
+    # Hooks run outside the chroot - "$1" is the target rootfs, so every
+    # path needs that prefix (confirmed against a real layer,
+    # layer/net-wireless/bluez.yaml, rather than assumed). Also confirmed
+    # (from a real failed build's own error output: "-C
+    # /home/.../pi-image-builder/layers ns bdebstrap ...") that hooks run
+    # with SRCROOT (the top-level -S directory) as their working
+    # directory, not this layer's own subdirectory - so a bare relative
+    # "files/..." doesn't resolve here the way it might look like it
+    # should. Using $SRCROOT explicitly instead of relying on any
+    # relative-path/cwd assumption at all.
+    # blynk.env and docker-compose.yml are staged into files/ by build.sh
+    # before each build - see build.sh and config/template.env.
+    - |-
+      set -eu
+      mkdir -p "$1/opt/blynk/backups" "$1/opt/blynk/mosquitto/conf.d" "$1/opt/blynk/images"
+      cp "$SRCROOT/layer/blynk-agent/files/blynk.env" "$1/opt/blynk/blynk.env"
+      cp "$SRCROOT/layer/blynk-agent/files/docker-compose.yml" "$1/opt/blynk/docker-compose.yml"
+      cp "$SRCROOT/layer/blynk-agent/files/blynk-first-boot.service" "$1/etc/systemd/system/blynk-first-boot.service"
+    - $BDEBSTRAP_HOOKS/enable-units "$1" blynk-first-boot
+    # Pre-cache both images as docker-archive tarballs, reading the actual
+    # image:tag references from the staged docker-compose.yml rather than
+    # hardcoding a version here - always matches whatever was checked out
+    # when build.sh ran. skopeo itself runs chrooted (needs the package
+    # installed into the target rootfs to invoke it there), writing its
+    # output to a path already inside that same chroot.
+    - |-
+      set -eu
+      # tr -d '\r' matters: this repo is checked out on Windows (git's
+      # autocrlf turns LF into CRLF), so docker-compose.yml has CRLF line
+      # endings - awk's $2 doesn't strip the trailing \r, which skopeo
+      # then correctly rejects as an invalid reference (confirmed via a
+      # real failed build: the extracted value's trailing \r was visibly
+      # corrupting terminal output too, moving the cursor back to column
+      # 0 on echo).
+      AGENT_IMAGE=$(grep -A2 '^  agent:' "$1/opt/blynk/docker-compose.yml" | grep 'image:' | awk '{print $2}' | tr -d '\r')
+      MOSQUITTO_IMAGE=$(grep -A2 '^  mosquitto:' "$1/opt/blynk/docker-compose.yml" | grep 'image:' | awk '{print $2}' | tr -d '\r')
+      # The trailing :$AGENT_IMAGE on the docker-archive destination
+      # matters: without an explicit docker-reference there, skopeo
+      # doesn't embed a RepoTags entry in the tarball's manifest, so
+      # `docker load` imports it untagged - confirmed on a real first
+      # boot, where docker compose couldn't find the pre-cached image by
+      # name at all and fell back to pulling (fails, no network) then
+      # building from `build: ./agent` (also fails, no source shipped).
+      chroot "$1" skopeo copy "docker://$AGENT_IMAGE" "docker-archive:/opt/blynk/images/agent.tar:$AGENT_IMAGE"
+      chroot "$1" skopeo copy "docker://$MOSQUITTO_IMAGE" "docker-archive:/opt/blynk/images/mosquitto.tar:$MOSQUITTO_IMAGE"

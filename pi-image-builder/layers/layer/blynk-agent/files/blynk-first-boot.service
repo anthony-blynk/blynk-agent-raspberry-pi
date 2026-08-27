@@ -1,0 +1,18 @@
+[Unit]
+Description=Blynk Agent first-boot setup (load pre-cached images, start the stack)
+ConditionPathExists=!/opt/blynk/.first-boot-done
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# No network dependency by design - the whole point is these images are
+# already on disk, loaded straight from the tarballs skopeo cached at
+# build time (see blynk-agent.yaml). docker load restores each image
+# under its original name:tag from the tarball's own embedded manifest,
+# so docker compose up can find it without ever touching the network.
+ExecStart=/bin/sh -c 'docker load -i /opt/blynk/images/agent.tar && docker load -i /opt/blynk/images/mosquitto.tar && docker compose -f /opt/blynk/docker-compose.yml up -d && touch /opt/blynk/.first-boot-done && systemctl disable blynk-first-boot.service'
+
+[Install]
+WantedBy=multi-user.target

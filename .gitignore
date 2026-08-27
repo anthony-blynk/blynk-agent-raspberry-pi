@@ -3,3 +3,10 @@ blynk-data/docker-compose.yml
 blynk-data/docker-compose.yml.backup
 blynk-data/backups/
 blynk-data/mosquitto/
+
+# pi-image-builder: staged per-build, generated fresh by build.sh from
+# config/template.env and the project's own docker-compose.yml
+pi-image-builder/layers/layer/blynk-agent/files/blynk.env
+pi-image-builder/layers/layer/blynk-agent/files/docker-compose.yml
+# cloned and pinned to a fixed commit by build.sh itself - not vendored
+pi-image-builder/rpi-image-gen/

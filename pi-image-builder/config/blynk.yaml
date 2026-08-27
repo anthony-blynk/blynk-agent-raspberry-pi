@@ -1,0 +1,68 @@
+# Top-level rpi-image-gen build config. Static - the actual per-build
+# values (server/template ID/vendor prefix) come from config/template.env,
+# staged by build.sh into files the blynk-agent layer's hooks copy in
+# directly, not through rpi-image-gen's own variable substitution - see
+# build.sh and layers/blynk-agent/blynk-agent.yaml for why.
+#
+# Layer names confirmed via `./rpi-image-gen layer --list` on a real
+# checkout (rather than the earlier web-research summary, which got the
+# device layer name wrong - it's "rpi5", not the "pi5" directory name it's
+# defined in).
+#
+# network-manager-iwd is required, not optional: this project's whole BLE
+# WiFi provisioning feature depends on NetworkManager's D-Bus API being
+# present and running. Can't use the trixie-minbase suite layer directly
+# for this - confirmed via its own source (layer/suite/debian/trixie-
+# minbase.yaml) that it's a pure metadata bundle hard-requiring
+# systemd-net-min, which conflicts with network-manager-iwd (both declare
+# themselves the system's network-activator - confirmed by an actual
+# build error, "Provider conflict: 'network-activator' is declared by
+# multiple layers: systemd-net-min, network-manager"). So: trixie-
+# minbase's own layer list, reproduced here, minus systemd-net-min, plus
+# network-manager-iwd in its place.
+#
+# docker-debian-trixie replaces guessing at Debian package names
+# ourselves in the blynk-agent layer.
+
+device:
+  layer: rpi5
+  # Deliberately no baked-in password/SSH key: that would be one shared
+  # secret across every device built from this image, and this stack
+  # already has a per-device answer to "how do I get a shell" - the
+  # Blynk Terminal widget (AGENT_TERMINAL_ENABLED in docker-compose.yml,
+  # gated per-session by the AgentTerminalEnabled switch) runs commands
+  # nsenter'd into the host's own namespaces as root, so once a device is
+  # provisioned you can set up SSH access on demand (e.g. `echo
+  # 'pi:...' | chpasswd` or append to ~pi/.ssh/authorized_keys) only for
+  # the specific devices you actually need to reach.
+
+image:
+  layer: image-rpios
+  # image-rpios's default "100%" auto-sizing doesn't correctly account for
+  # our blynk-agent layer's added content (~300-400MB of pre-cached Docker
+  # image tarballs) - confirmed via a real failed build ("Could not
+  # allocate block in ext2 filesystem" at a ~1.1GB root partition size).
+  # Fixed, generous size instead, comfortably covering base OS + Docker +
+  # NetworkManager + both cached images with headroom to spare.
+  root_part_size: 4G
+
+layer:
+  distro: debian-trixie-arm64-multi
+  aptrepo: rpi-debian-trixie
+  utils: rpi-misc-utils
+  essential2: rpi-essential-base
+  skel: rpi-misc-skel
+  ssh: openssh-server
+  time: systemd-timesyncd
+  wireless: wireless-regulatory
+  iwd: iwd
+  networking: network-manager-iwd
+  # Missing on the first real flash-and-boot test: the rpi5 device layer
+  # only *declares* Bluetooth hardware capability (hw:bluetooth), it
+  # doesn't install/enable the actual BlueZ software stack - without this,
+  # there's no bluetoothd/org.bluez D-Bus service at all, so
+  # ble_provisioning.py can never start advertising. Confirmed missing by
+  # checking back through the build's own "Loaded ..." layer list.
+  bluetooth: bluez
+  docker: docker-debian-trixie
+  blynk: blynk-agent
