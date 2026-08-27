@@ -240,8 +240,13 @@ def _short_suffix(unique_id: str, length: int = 4) -> str:
     return "".join(chars)
 
 
-def device_name() -> str:
-    return f"Blynk Device-{_short_suffix(_device_serial())}"
+def device_name(vendor_prefix: str = "Blynk") -> str:
+    # Keep vendor_prefix short - the whole name should stay under ~29 bytes
+    # to avoid BLE advertising truncation (see the protocol doc's device
+    # naming guidance); unlike the reference SDKs, this doesn't truncate a
+    # long prefix automatically, since there's no separate template-name
+    # component here to shrink instead.
+    return f"{vendor_prefix} Device-{_short_suffix(_device_serial())}"
 
 
 class FastAdvertisement(Advertisement):
@@ -413,11 +418,11 @@ class ProvisioningSession:
     def _handle_info(self, data) -> None:
         self.service.send({
             "t": "info",
-            "vendor": "Blynk",
+            "vendor": self.config.vendor_prefix,
             "tmpl_id": self.config.template_id,
             "fw_type": "0",
             "fw_ver": self.compose_manager.get_version() or "unknown",
-            "name": device_name(),
+            "name": device_name(self.config.vendor_prefix),
         })
 
     def _handle_ifs(self, data) -> None:
@@ -675,7 +680,7 @@ class ProvisioningSession:
             agent = NoIoAgent()
             await agent.register(bus)
 
-            name = device_name()
+            name = device_name(self.config.vendor_prefix)
             # A 128-bit custom service UUID plus this name doesn't fit in
             # the primary 31-byte advertising packet, but BlueZ packs what
             # it can into the primary packet and automatically overflows

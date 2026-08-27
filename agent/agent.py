@@ -116,12 +116,22 @@ class BlynkConfig:
         self.server: Optional[str] = None
         self.auth_token: Optional[str] = None
         self.template_id: Optional[str] = None
+        # White-labeling for Blynk Enterprise clients running their own
+        # server/app - matches Edgent-ESP-IDF/Edgent-Arduino's own
+        # BLYNK_VENDOR_PREFIX. Used for the BLE-advertised device name and
+        # the "vendor" field in the info response (Arduino's Edgent uses it
+        # for both; ESP-IDF's hardcodes "vendor" to literal "Blynk", which
+        # looks like an oversight given the whole point is hiding "Blynk"
+        # branding from a white-labeled app - matching Arduino's fuller
+        # behavior here instead).
+        self.vendor_prefix: str = "Blynk"
 
     def load(self, env_path: Path = ENV_FILE) -> bool:
         values = dotenv_values(env_path) if env_path.exists() else {}
         self.server = values.get("BLYNK_SERVER") or os.getenv("BLYNK_SERVER") or None
         self.auth_token = values.get("BLYNK_AUTH_TOKEN") or os.getenv("BLYNK_AUTH_TOKEN") or None
         self.template_id = values.get("BLYNK_TEMPLATE_ID") or os.getenv("BLYNK_TEMPLATE_ID") or None
+        self.vendor_prefix = values.get("BLYNK_VENDOR_PREFIX") or os.getenv("BLYNK_VENDOR_PREFIX") or "Blynk"
 
         # Server/token are optional here - a device shipped with no auth
         # token is expected to get them later via BLE provisioning.
@@ -151,6 +161,7 @@ class BlynkConfig:
             f"BLYNK_SERVER={self.server or ''}\n"
             f"BLYNK_TEMPLATE_ID={self.template_id or ''}\n"
             f"BLYNK_AUTH_TOKEN={self.auth_token or ''}\n"
+            f"BLYNK_VENDOR_PREFIX={self.vendor_prefix}\n"
         )
 
     def effective_server(self) -> str:

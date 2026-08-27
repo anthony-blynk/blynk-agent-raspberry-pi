@@ -12,6 +12,8 @@ curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-agent-raspberry
 
 Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per Pi — see [Updating](#updating).
 
+Blynk Enterprise clients running their own server and a branded mobile app can also set a vendor prefix at install time (`BLYNK_VENDOR_PREFIX`, defaults to `Blynk`) - it replaces "Blynk" in the BLE-advertised device name (e.g. `Blynk Device-971K` → `Acme Device-971K`) and the provisioning `vendor` field, so the device never shows unbranded "Blynk" text during setup.
+
 ## How it works
 
 ```mermaid

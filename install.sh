@@ -71,10 +71,16 @@ if [ ! -f "$STATE_DIR/blynk.env" ]; then
   read -r -p "BLYNK_TEMPLATE_ID: " BLYNK_TEMPLATE_ID </dev/tty
   read -r -s -p "BLYNK_AUTH_TOKEN, or leave blank: " BLYNK_AUTH_TOKEN </dev/tty
   echo
+  # Only relevant for Blynk Enterprise clients running their own server and
+  # a branded mobile app - replaces "Blynk" in the BLE-advertised device
+  # name and the provisioning "vendor" field. Leave blank for the normal
+  # Blynk Cloud/app.
+  read -r -p "BLYNK_VENDOR_PREFIX (white-label branding, leave blank for 'Blynk'): " BLYNK_VENDOR_PREFIX </dev/tty
   cat > "$STATE_DIR/blynk.env" <<EOF
 BLYNK_SERVER=$BLYNK_SERVER
 BLYNK_TEMPLATE_ID=$BLYNK_TEMPLATE_ID
 BLYNK_AUTH_TOKEN=$BLYNK_AUTH_TOKEN
+BLYNK_VENDOR_PREFIX=${BLYNK_VENDOR_PREFIX:-Blynk}
 EOF
   echo "Wrote $STATE_DIR/blynk.env"
   if [ -z "$BLYNK_AUTH_TOKEN" ]; then
