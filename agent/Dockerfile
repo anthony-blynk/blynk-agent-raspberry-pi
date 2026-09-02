@@ -1,7 +1,7 @@
 FROM alpine:3.20
 
 # docker-cli + docker-cli-compose let the agent drive the HOST's Docker
-# daemon (via the mounted socket) to apply OTA updates and restart mosquitto.
+# daemon (via the mounted socket) to apply OTA updates and restart mqtt-bridge.
 # util-linux provides nsenter - the terminal feature (see
 # TERMINAL_CAPABILITY_ENABLED in agent.py) uses it to join the host's PID
 # 1 namespaces for real host-level command execution, not just this

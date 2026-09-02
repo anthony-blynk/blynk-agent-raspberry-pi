@@ -1,6 +1,6 @@
 """
-Blynk Agent - runs as a plain local MQTT client against the mosquitto
-container (no TLS, no cloud auth - that's handled entirely by mosquitto's
+Blynk Agent - runs as a plain local MQTT client against the mqtt-bridge
+container (no TLS, no cloud auth - that's handled entirely by mqtt-bridge's
 bridge connection to Blynk). Manages OTA updates to the stack's own
 docker-compose.yml and reacts to a few other downlink control topics.
 """
@@ -36,11 +36,11 @@ CONFIG_BASE = Path(os.getenv('BLYNK_CONFIG_DIR', '/opt/blynk'))
 ENV_FILE = CONFIG_BASE / "blynk.env"
 COMPOSE_FILE = CONFIG_BASE / "docker-compose.yml"
 BACKUP_DIR = CONFIG_BASE / "backups"
-BRIDGE_CONF_DIR = CONFIG_BASE / "mosquitto" / "conf.d"
+BRIDGE_CONF_DIR = CONFIG_BASE / "mqtt-bridge" / "conf.d"
 BRIDGE_CONF_FILE = BRIDGE_CONF_DIR / "blynk-bridge.conf"
 BRIDGE_HOST_OVERRIDE_FILE = CONFIG_BASE / "bridge_host_override"
 
-MQTT_HOST = os.getenv("MQTT_HOST", "mosquitto")
+MQTT_HOST = os.getenv("MQTT_HOST", "mqtt-bridge")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 
 # Capability gate, not a runtime toggle - deliberately only settable via
@@ -108,8 +108,8 @@ topic meta/# out 1
 
 
 class BlynkConfig:
-    """Cloud identity (server/token/template) - used to render the mosquitto
-    bridge config and to report device info, not for any MQTT connection
+    """Cloud identity (server/token/template) - used to render the mqtt-bridge
+    config and to report device info, not for any MQTT connection
     the agent itself makes."""
 
     def __init__(self):
@@ -174,13 +174,13 @@ class BlynkConfig:
         return self.server
 
 
-MOSQUITTO_CONTAINER = "blynk-mosquitto-1"  # docker-compose.yml's fixed `name: blynk` + service `mosquitto`, single instance
+MQTT_BRIDGE_CONTAINER = "blynk-mqtt-bridge-1"  # docker-compose.yml's fixed `name: blynk` + service `mqtt-bridge`, single instance
 
 
-class MosquittoBridge:
-    """Renders the mosquitto bridge connection config and restarts the
-    mosquitto container (by name, not via the docker-compose project -
-    see _restart_mosquitto) when it changes."""
+class MqttBridge:
+    """Renders the mqtt-bridge connection config and restarts the
+    mqtt-bridge container (by name, not via the docker-compose project -
+    see _restart_mqtt_bridge) when it changes."""
 
     def __init__(self, config: BlynkConfig, compose_path: Path = COMPOSE_FILE):
         self.config = config
@@ -202,7 +202,7 @@ class MosquittoBridge:
         if unchanged:
             # force_restart=True after a real WiFi (re)connect, even though
             # the bridge conf content itself didn't change - confirmed on
-            # real hardware that mosquitto's container keeps whatever DNS
+            # real hardware that the mqtt-bridge container keeps whatever DNS
             # server Docker generated its resolv.conf from at container
             # start, and never re-reads the host's current one. Switching
             # WiFi networks with a different DNS server (e.g. moving a
@@ -210,17 +210,17 @@ class MosquittoBridge:
             # to resolve the Blynk host, even though the host itself, and
             # WiFi, were both fine - only a container restart picks up the
             # host's current resolver.
-            logger.info(f"Bridge config unchanged for {server}, restarting mosquitto anyway after a WiFi (re)connect")
+            logger.info(f"Bridge config unchanged for {server}, restarting mqtt-bridge anyway after a WiFi (re)connect")
         else:
             BRIDGE_CONF_FILE.write_text(rendered)
-            logger.info(f"Bridge config updated for {server}, restarting mosquitto")
-        self._restart_mosquitto()
+            logger.info(f"Bridge config updated for {server}, restarting mqtt-bridge")
+        self._restart_mqtt_bridge()
 
     def apply_redirect(self, new_server: str) -> None:
         BRIDGE_HOST_OVERRIDE_FILE.write_text(new_server)
         self.ensure_current(server_override=new_server)
 
-    def _restart_mosquitto(self) -> None:
+    def _restart_mqtt_bridge(self) -> None:
         try:
             process = subprocess.run(
                 # Plain `docker restart`, not `docker compose restart`:
@@ -230,17 +230,17 @@ class MosquittoBridge:
                 # the same command via the host's own compose plugin
                 # (v5.4.0) - a version-specific slowdown in compose's own
                 # restart path. The low-level engine call sidesteps it.
-                # -t 0 skips the graceful-shutdown wait too: mosquitto's
+                # -t 0 skips the graceful-shutdown wait too: mqtt-bridge's
                 # persistence log tolerates abrupt termination fine, and
                 # there's nothing worth flushing at the point this fires
                 # (first provisioning, or an occasional bridge redirect).
-                ["docker", "restart", "-t", "0", MOSQUITTO_CONTAINER],
+                ["docker", "restart", "-t", "0", MQTT_BRIDGE_CONTAINER],
                 capture_output=True, text=True, timeout=30,
             )
             if process.returncode != 0:
-                logger.error(f"Failed to restart mosquitto: {process.stderr}")
+                logger.error(f"Failed to restart mqtt-bridge: {process.stderr}")
         except Exception as e:
-            logger.error(f"Failed to restart mosquitto: {e}")
+            logger.error(f"Failed to restart mqtt-bridge: {e}")
 
 
 class ComposeManager:
@@ -393,7 +393,7 @@ class ComposeManager:
 
             # This container gets attached to the project's network by
             # Compose automatically - a standalone `docker run` for the
-            # helper doesn't join it on its own, so "mosquitto" wouldn't
+            # helper doesn't join it on its own, so "mqtt-bridge" wouldn't
             # resolve inside the helper unless we explicitly reuse it.
             my_network = subprocess.run(
                 ["docker", "inspect", "--format",
@@ -571,10 +571,10 @@ def _read_temperature_c() -> Optional[float]:
 
 
 class BlynkAgent:
-    """MQTT client against the local mosquitto broker only - no TLS, no
-    cloud credentials here, those live entirely in the mosquitto bridge."""
+    """MQTT client against the local mqtt-bridge broker only - no TLS, no
+    cloud credentials here, those live entirely in the mqtt-bridge."""
 
-    def __init__(self, config: BlynkConfig, compose_manager: ComposeManager, bridge: MosquittoBridge):
+    def __init__(self, config: BlynkConfig, compose_manager: ComposeManager, bridge: MqttBridge):
         self.config = config
         self.compose_manager = compose_manager
         self.bridge = bridge
@@ -728,7 +728,7 @@ class BlynkAgent:
     def _check_connectivity_watchdog(self) -> None:
         # Ticked from _diagnostics_loop's existing 60s cadence rather than a
         # dedicated thread - the bridge-state notification above is only
-        # republished on a real state change (mosquitto's notifications
+        # republished on a real state change (mqtt-bridge's notifications
         # feature is retained-on-change, not periodic), so something has to
         # poll elapsed time against BRIDGE_DISCONNECT_GRACE_PERIOD.
         if self._bridge_disconnected_since is None or self._reprovisioning:
@@ -775,11 +775,11 @@ class BlynkAgent:
                 # The outage could just as easily have resolved itself
                 # while this unattended session was running (WiFi/ISP came
                 # back on its own with no one around to reconfigure
-                # anything) - mosquitto's bridge-state notification only
+                # anything) - mqtt-bridge's bridge-state notification only
                 # republishes on an actual change, so if it already
                 # flipped back to connected while we were busy advertising,
                 # nothing would otherwise tell us. Re-subscribing forces
-                # mosquitto to redeliver the *current* retained value, so
+                # mqtt-bridge to redeliver the *current* retained value, so
                 # we check reality again instead of blindly re-arming the
                 # clock and looping into another pointless advertising
                 # window forever even after the device is actually fine.
@@ -957,7 +957,7 @@ def main():
         return
 
     compose_manager = ComposeManager()
-    bridge = MosquittoBridge(config)
+    bridge = MqttBridge(config)
 
     if config.is_provisioned():
         bridge.ensure_current()

@@ -2,7 +2,7 @@ blynk-data/blynk.env
 blynk-data/docker-compose.yml
 blynk-data/docker-compose.yml.backup
 blynk-data/backups/
-blynk-data/mosquitto/
+blynk-data/mqtt-bridge/
 
 # pi-image-builder: staged per-build, generated fresh by build.sh from
 # config/template.env and the project's own docker-compose.yml

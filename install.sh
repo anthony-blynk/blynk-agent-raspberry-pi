@@ -2,7 +2,7 @@
 set -e
 
 OWNER="anthony-blynk"
-REPO="blynk-agent-raspberry-pi"
+REPO="blynk-edge-agent"
 BRANCH="master"
 RAW_BASE="https://raw.githubusercontent.com/$OWNER/$REPO/$BRANCH"
 STATE_DIR=/opt/blynk
@@ -49,7 +49,7 @@ if ! docker compose version >/dev/null 2>&1; then
   fi
 fi
 
-sudo mkdir -p "$STATE_DIR/backups" "$STATE_DIR/mosquitto/conf.d"
+sudo mkdir -p "$STATE_DIR/backups" "$STATE_DIR/mqtt-bridge/conf.d"
 sudo chown -R "$USER":"$USER" "$STATE_DIR"
 
 if [ ! -f "$STATE_DIR/docker-compose.yml" ]; then

@@ -12,7 +12,7 @@ RemainAfterExit=yes
 # build time (see blynk-agent.yaml). docker load restores each image
 # under its original name:tag from the tarball's own embedded manifest,
 # so docker compose up can find it without ever touching the network.
-ExecStart=/bin/sh -c 'docker load -i /opt/blynk/images/agent.tar && docker load -i /opt/blynk/images/mosquitto.tar && docker compose -f /opt/blynk/docker-compose.yml up -d && touch /opt/blynk/.first-boot-done && systemctl disable blynk-first-boot.service'
+ExecStart=/bin/sh -c 'docker load -i /opt/blynk/images/agent.tar && docker load -i /opt/blynk/images/mqtt-bridge.tar && docker compose -f /opt/blynk/docker-compose.yml up -d && touch /opt/blynk/.first-boot-done && systemctl disable blynk-first-boot.service'
 
 [Install]
 WantedBy=multi-user.target

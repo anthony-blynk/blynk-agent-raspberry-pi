@@ -1,10 +1,10 @@
 # Custom rpi-image-gen layer - stages this project's stack and pre-caches
-# the agent/mosquitto images so the built image needs zero network to
+# the agent/mqtt-bridge images so the built image needs zero network to
 # reach a working BLE-advertising state on first real boot.
 #
 # METABEGIN
 # X-Env-Layer-Name: blynk-agent
-# X-Env-Layer-Desc: Blynk Agent stack (mosquitto + agent), pre-configured and pre-cached
+# X-Env-Layer-Desc: Blynk Agent stack (mqtt-bridge + agent), pre-configured and pre-cached
 # X-Env-Layer-Version: 1.0.0
 # X-Env-Layer-Category: general
 # METAEND
@@ -28,7 +28,7 @@ mmdebstrap:
     # before each build - see build.sh and config/template.env.
     - |-
       set -eu
-      mkdir -p "$1/opt/blynk/backups" "$1/opt/blynk/mosquitto/conf.d" "$1/opt/blynk/images"
+      mkdir -p "$1/opt/blynk/backups" "$1/opt/blynk/mqtt-bridge/conf.d" "$1/opt/blynk/images"
       cp "$SRCROOT/layer/blynk-agent/files/blynk.env" "$1/opt/blynk/blynk.env"
       cp "$SRCROOT/layer/blynk-agent/files/docker-compose.yml" "$1/opt/blynk/docker-compose.yml"
       cp "$SRCROOT/layer/blynk-agent/files/blynk-first-boot.service" "$1/etc/systemd/system/blynk-first-boot.service"
@@ -49,7 +49,7 @@ mmdebstrap:
       # corrupting terminal output too, moving the cursor back to column
       # 0 on echo).
       AGENT_IMAGE=$(grep -A2 '^  agent:' "$1/opt/blynk/docker-compose.yml" | grep 'image:' | awk '{print $2}' | tr -d '\r')
-      MOSQUITTO_IMAGE=$(grep -A2 '^  mosquitto:' "$1/opt/blynk/docker-compose.yml" | grep 'image:' | awk '{print $2}' | tr -d '\r')
+      MQTT_BRIDGE_IMAGE=$(grep -A2 '^  mqtt-bridge:' "$1/opt/blynk/docker-compose.yml" | grep 'image:' | awk '{print $2}' | tr -d '\r')
       # The trailing :$AGENT_IMAGE on the docker-archive destination
       # matters: without an explicit docker-reference there, skopeo
       # doesn't embed a RepoTags entry in the tarball's manifest, so
@@ -58,4 +58,4 @@ mmdebstrap:
       # name at all and fell back to pulling (fails, no network) then
       # building from `build: ./agent` (also fails, no source shipped).
       chroot "$1" skopeo copy "docker://$AGENT_IMAGE" "docker-archive:/opt/blynk/images/agent.tar:$AGENT_IMAGE"
-      chroot "$1" skopeo copy "docker://$MOSQUITTO_IMAGE" "docker-archive:/opt/blynk/images/mosquitto.tar:$MOSQUITTO_IMAGE"
+      chroot "$1" skopeo copy "docker://$MQTT_BRIDGE_IMAGE" "docker-archive:/opt/blynk/images/mqtt-bridge.tar:$MQTT_BRIDGE_IMAGE"

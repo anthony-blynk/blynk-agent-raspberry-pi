@@ -1,4 +1,4 @@
-# Blynk Agent for Raspberry Pi
+# Blynk Edge Agent
 
 Turns a Raspberry Pi into a Blynk device. A local MQTT broker acts as a bridge to Blynk Cloud and handles the connection complexity — auth, certificates, all of it — so every other service on the Pi just speaks plain local MQTT, while the whole stack stays updatable over the air through Blynk OTA.
 
@@ -7,7 +7,7 @@ Turns a Raspberry Pi into a Blynk device. A local MQTT broker acts as a bridge t
 Get up and running on a fresh Pi with a single command:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-agent-raspberry-pi/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-edge-agent/master/install.sh | bash
 ```
 
 Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per Pi — see [Updating](#updating).
@@ -23,7 +23,7 @@ flowchart LR
 
     subgraph pi["Raspberry Pi"]
         subgraph compose["docker compose"]
-            mosquitto["mosquitto<br/>local broker :1883"]
+            mqttbridge["mqtt-bridge<br/>local broker :1883"]
             agent["agent<br/>OTA / ping / reboot / redirect"]
             subgraph apps["your app(s) - optional"]
                 app1["app 1"]
@@ -35,27 +35,27 @@ flowchart LR
     end
 
     console <--> cloud
-    cloud <-->|bridge: TLS, mqttv5| mosquitto
-    agent <--> mosquitto
-    app1 -.-> mosquitto
-    app2 -.-> mosquitto
-    local <--> mosquitto
+    cloud <-->|bridge: TLS, mqttv5| mqttbridge
+    agent <--> mqttbridge
+    app1 -.-> mqttbridge
+    app2 -.-> mqttbridge
+    local <--> mqttbridge
 
     style compose fill:#dbe9ff,stroke:#5b8def,color:#1a1a1a
 ```
 
-- **mosquitto** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
-- **mosquitto** bridges the local broker to Blynk Cloud. Only mosquitto holds the Blynk auth token (for that cloud bridge connection) - anything else on the Pi just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
+- **mqtt-bridge** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
+- **mqtt-bridge** bridges the local broker to Blynk Cloud. Only mqtt-bridge holds the Blynk auth token (for that cloud bridge connection) - anything else on the Pi just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
 - That local broker is only reachable on the Pi itself (`127.0.0.1:1883`) - nothing outside the Pi can connect to it.
 - **agent** subscribes to Blynk's downlink control topics: `downlink/ota/json` (downloads, validates, and applies a new `docker-compose.yml`, with automatic rollback on failure), `downlink/ping`, `downlink/reboot`, `downlink/redirect`, and `downlink/reconfigure`.
-- You can add your own service(s) to `docker-compose.yml` alongside mosquitto and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
+- You can add your own service(s) to `docker-compose.yml` alongside mqtt-bridge and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
 - Blynk's own topics (`ds/#`, `downlink/#`, etc. - see [the MQTT API docs](https://docs.blynk.io/en/blynk.cloud-mqtt-api/device-mqtt-api/topic-structure)) are what actually reach Blynk Cloud through the bridge. Your apps are free to use any other topics on the local broker too - those just stay local and never interact with Blynk at all.
 
 ## WiFi provisioning
 
 A device with no stored Blynk auth token (`blynk.env` left blank during `install.sh`, or after a `downlink/reconfigure`) advertises over Bluetooth LE and runs the Blynk app's provisioning flow ("Blynk.Inject"): the app scans, connects, requests the device's real network interfaces, and - for a WiFi interface - requests a scan and lets the user pick an SSID, enter a password, and optionally set a static IP. The device configures WiFi and the Blynk connection through NetworkManager over D-Bus (the host's, not the container's own - reached over the same D-Bus socket already used for BlueZ), reporting live status back over the same BLE link the whole time, including specific failure reasons (e.g. a wrong password) so the app can prompt for corrected credentials without needing to reconnect.
 
-If a previously-provisioned device later loses connectivity for a sustained period (WiFi credentials changed at the router, for example), it automatically re-enters this same BLE provisioning flow **in place** - without a reboot, and without discarding the already-stored Blynk auth token - so the app only needs to supply corrected network info. This is checked roughly every minute against `$SYS/broker/connection/blynk-bridge-{template_id}/state` (mosquitto's own bridge connection-state notification), and only triggers after the bridge has been down continuously for several minutes, to ride out brief blips rather than reprovisioning on the first hiccup.
+If a previously-provisioned device later loses connectivity for a sustained period (WiFi credentials changed at the router, for example), it automatically re-enters this same BLE provisioning flow **in place** - without a reboot, and without discarding the already-stored Blynk auth token - so the app only needs to supply corrected network info. This is checked roughly every minute against `$SYS/broker/connection/blynk-bridge-{template_id}/state` (mqtt-bridge's own bridge connection-state notification), and only triggers after the bridge has been down continuously for several minutes, to ride out brief blips rather than reprovisioning on the first hiccup.
 
 ## Diagnostics and system info
 
