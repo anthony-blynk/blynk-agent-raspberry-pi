@@ -1,17 +1,29 @@
 #!/usr/bin/env bash
-# Builds a pre-baked Pi 5 image: Docker, this project's docker-compose.yml,
-# and a blynk.env with server/template ID/vendor prefix already filled in
-# (token deliberately left blank - see config/template.env) - so the image
-# boots straight into BLE provisioning, no install.sh step needed.
+# Builds a pre-baked image (Pi 5 or CM4): Docker, this project's
+# docker-compose.yml, and a blynk.env with server/template ID/vendor
+# prefix already filled in (token deliberately left blank - see
+# config/template.env) - so the image boots straight into BLE
+# provisioning, no install.sh step needed.
 #
 # Host requirement: real arm64 Debian Bookworm/Trixie, or Raspberry Pi OS
 # itself - that's rpi-image-gen's own natively-supported host, not x86_64
 # (which needs containers/QEMU and is the slower, less-supported path).
+#
+# Usage: ./build.sh [device]   - device is a name under config/ (rpi5.yaml,
+#                                 cm4.yaml, ...), defaults to rpi5.
 set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 RIG_DIR="$HERE/rpi-image-gen"
+
+DEVICE="${1:-rpi5}"
+DEVICE_CONFIG="$HERE/config/$DEVICE.yaml"
+if [ ! -f "$DEVICE_CONFIG" ]; then
+  echo "Unknown device '$DEVICE' - no $DEVICE_CONFIG."
+  echo "Available: $(cd "$HERE/config" && ls -- *.yaml 2>/dev/null | sed 's/\.yaml$//' | tr '\n' ' ')"
+  exit 1
+fi
 # rpi-image-gen's build command requires custom layers under a layer/
 # subdirectory of -S's target (confirmed by testing - it mirrors its own
 # internal device/image/layer structure), unlike the standalone
@@ -64,9 +76,15 @@ EOF
 # blynk-first-boot.service is static and already tracked in git at
 # layers/layer/blynk-agent/files/ - nothing to stage for it.
 
-echo "Building image (this needs real Linux, not just Docker cross-arch emulation - see README)..."
-(cd "$RIG_DIR" && ./rpi-image-gen build -c "$HERE/config/blynk.yaml" -S "$HERE/layers")
+echo "Building image for '$DEVICE' (this needs real Linux, not just Docker cross-arch emulation - see README)..."
+(cd "$RIG_DIR" && ./rpi-image-gen build -c "$DEVICE_CONFIG" -S "$HERE/layers")
 
 echo
-echo "Done - see $RIG_DIR/work/ for the built .img. Flash it with:"
-echo "  sudo rpi-imager --cli <path-to-.img> /dev/sdX"
+echo "Done - see $RIG_DIR/work/ for the built .img."
+if [ "$DEVICE" = "cm4" ]; then
+  echo "CM4 boots from eMMC - see the README's 'Flashing a CM4' section for the"
+  echo "rpiboot/USB mass-storage steps needed before you can flash it like an SD card."
+else
+  echo "Flash it with:"
+  echo "  sudo rpi-imager --cli <path-to-.img> /dev/sdX"
+fi

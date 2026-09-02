@@ -1,0 +1,51 @@
+# Top-level rpi-image-gen build config for the Compute Module 4 (wireless
+# SKU, on the official CM4 IO Board, booting from onboard eMMC). Selected
+# with `./build.sh cm4` - see rpi5.yaml for the Pi 5 equivalent and for
+# the shared design notes (network-manager-iwd, bluez, docker-debian-
+# trixie, no baked-in login) that apply here unchanged.
+#
+# Device layer confirmed via `./rpi-image-gen layer --list | grep -i cm4`
+# on a real checkout: "rpi-cm4" (from cm4/device.yaml), not the "cm4"
+# directory name - same kind of directory-vs-layer-name mismatch as rpi5.
+#
+# NOT YET BUILD/BOOT TESTED ON REAL CM4 HARDWARE - unlike rpi5.yaml, which
+# went through a full real-hardware iteration cycle, this is a first-pass
+# port assuming the same generic layers (network, docker, bluetooth) work
+# unchanged across device layers. Treat the first real build+flash here as
+# a verification step, not a known-good config - see the pi-image-builder
+# README's "Status" section.
+
+device:
+  layer: rpi-cm4
+  # Same reasoning as rpi5.yaml: no baked-in password/SSH key, use the
+  # Blynk Terminal widget to set up per-device SSH access once online.
+
+image:
+  layer: image-rpios
+  # Reusing the same size that proved sufficient for the rpi5 image
+  # (base OS + Docker + NetworkManager + both cached agent images, ~4G
+  # total). Not yet confirmed this comfortably fits your CM4's specific
+  # eMMC size - if the build fails with an ext2 "Could not allocate
+  # block" error like the one hit during rpi5 development, this is
+  # too large for the eMMC and needs reducing instead.
+  root_part_size: 4G
+
+layer:
+  distro: debian-trixie-arm64-multi
+  aptrepo: rpi-debian-trixie
+  utils: rpi-misc-utils
+  essential2: rpi-essential-base
+  skel: rpi-misc-skel
+  ssh: openssh-server
+  time: systemd-timesyncd
+  wireless: wireless-regulatory
+  iwd: iwd
+  networking: network-manager-iwd
+  # Included on the same reasoning as rpi5.yaml even though `layer --list`
+  # didn't show an hw:bluetooth capability against rpi-cm4 the way it did
+  # for rpi5 - bluez is a generic layer, not device-specific, so there's
+  # no reason it wouldn't install the same way. Confirm on first real boot
+  # test that bluetoothd/org.bluez actually comes up.
+  bluetooth: bluez
+  docker: docker-debian-trixie
+  blynk: blynk-agent

@@ -1,8 +1,10 @@
-# Top-level rpi-image-gen build config. Static - the actual per-build
-# values (server/template ID/vendor prefix) come from config/template.env,
-# staged by build.sh into files the blynk-agent layer's hooks copy in
-# directly, not through rpi-image-gen's own variable substitution - see
-# build.sh and layers/blynk-agent/blynk-agent.yaml for why.
+# Top-level rpi-image-gen build config for the Raspberry Pi 5. Static - the
+# actual per-build values (server/template ID/vendor prefix) come from
+# config/template.env, staged by build.sh into files the blynk-agent
+# layer's hooks copy in directly, not through rpi-image-gen's own variable
+# substitution - see build.sh and layers/blynk-agent/blynk-agent.yaml for
+# why. Selected with `./build.sh rpi5` (also the default) - see cm4.yaml
+# for the Compute Module 4 equivalent.
 #
 # Layer names confirmed via `./rpi-image-gen layer --list` on a real
 # checkout (rather than the earlier web-research summary, which got the
