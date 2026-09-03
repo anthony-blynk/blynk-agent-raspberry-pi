@@ -65,7 +65,7 @@ Blynk Enterprise clients running their own server and a branded mobile app can a
 
 ## Testing the connection
 
-Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the dashboard:
+Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the dashboard. No complicated authetication needed, thats all dealt with by the Agent:
 
 First:
 ```
