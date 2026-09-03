@@ -485,7 +485,16 @@ def publish_device_info_once(config: 'BlynkConfig', compose_manager: 'ComposeMan
     try:
         client.connect(MQTT_HOST, MQTT_PORT, keepalive=KEEPALIVE)
         client.loop_start()
-        info = client.publish(TOPIC_INFO, json.dumps(payload), qos=1)
+        # retain=True matters here specifically: mqtt-bridge itself may have
+        # just been recreated by this same OTA apply and not yet finished
+        # reconnecting to Blynk Cloud at this exact instant - confirmed on
+        # real hardware that a non-retained publish here can be published
+        # locally before the bridge's local subscription to info/mcu is
+        # active, silently never reaching Blynk Cloud at all (the device
+        # ends up genuinely running the new version with Blynk never told).
+        # Retained means whenever the bridge does connect and subscribe, it
+        # picks up this value regardless of the exact timing race.
+        info = client.publish(TOPIC_INFO, json.dumps(payload), qos=1, retain=True)
         info.wait_for_publish(timeout=5)
         logger.info(f"Published device info (post-apply): {payload}")
     except Exception as e:
@@ -862,7 +871,10 @@ class BlynkAgent:
             "type": self.config.template_id,
             "rxbuff": 1024
         }
-        self.client.publish(TOPIC_INFO, json.dumps(payload), qos=1)
+        # retain=True: fires on every local-broker connect, with no
+        # guarantee mqtt-bridge has finished reconnecting to Blynk Cloud
+        # yet - same reasoning as publish_device_info_once's retain flag.
+        self.client.publish(TOPIC_INFO, json.dumps(payload), qos=1, retain=True)
         logger.info(f"Published device info: {payload}")
 
     def _publish_system_info(self) -> None:
