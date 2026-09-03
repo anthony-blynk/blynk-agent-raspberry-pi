@@ -7,12 +7,23 @@ already-configured device (see the `reprovisioning` flag below).
 
 Implements info/ifs/scan/set/connect/reset/reboot. Real WiFi devices are
 reported (and can actually be scanned/connected) via NetworkManager's
-D-Bus API - not yet verified against real hardware, since every prior
-network interface reported here was a fake "eth" purely to skip the app's
-WiFi picker (the doc suggests ifs/scan can be skipped for a device with
+D-Bus API - confirmed against real hardware, since every prior network
+interface reported here was a fake "eth" purely to skip the app's WiFi
+picker (the doc suggests ifs/scan can be skipped for a device with
 connectivity some other way, but the real app sends "ifs" unconditionally
 and won't proceed past reading device details without a response to it -
 confirmed via btmon against real hardware).
+
+Cellular ("cell") is also implemented - NetworkManager activates the
+connection (same D-Bus pattern as WiFi, a "gsm" connection type instead of
+"802-11-wireless"), while modem/SIM identity and lock state (IMEI/IMSI/
+ICCID/PIN-required) come from ModemManager, a separate D-Bus service NM
+doesn't expose that information through itself. NOT YET VERIFIED against
+real hardware - written against the CompuLab IOT-GATE-iMX8's documented
+`nmcli connection add type gsm ...` flow and ModemManager's public D-Bus
+API, but treat the first real attempt (with a real SIM/data plan) as an
+iteration, not a guaranteed-correct implementation, same as everything
+else in this file needed real-hardware fixes before it actually worked.
 
 Note: bluez-peripheral's PyPI release (0.1.7) predates the API shown on
 its own docs site (which tracks an unreleased rewrite on GitHub master) -
@@ -62,7 +73,7 @@ TX_UUID = "95e30003-5737-45a9-a092-a88e2e5dd659"
 # Fields the Blynk app's "set" message may send - anything outside this
 # set triggers set_fail, matching the reference implementation's behaviour
 # (a deliberate check to catch app/device version mismatches).
-KNOWN_SET_FIELDS = {"if", "ssid", "pass", "blynk", "host", "ip", "mask", "gw", "dns", "dns2", "save"}
+KNOWN_SET_FIELDS = {"if", "ssid", "pass", "pin", "apn", "blynk", "host", "ip", "mask", "gw", "dns", "dns2", "save"}
 
 # The host's NetworkManager, reached over the same D-Bus system socket
 # already bind-mounted for BlueZ (see docker-compose.yml) - no separate
@@ -81,9 +92,14 @@ NM_SETTINGS_IFACE = "org.freedesktop.NetworkManager.Settings"
 NM_SETTINGS_CONNECTION_IFACE = "org.freedesktop.NetworkManager.Settings.Connection"
 
 # NMDeviceType (subset) - https://networkmanager.dev/docs/api/latest/nm-dbus-types.html
+# MODEM=8 is per NM's published enum, not yet confirmed against real
+# hardware (the same "verify against the real device, not just docs"
+# lesson this project has already learned the hard way elsewhere) - check
+# this first if a cellular modem doesn't show up in the "ifs" response.
 NM_DEVICE_TYPE_ETHERNET = 1
 NM_DEVICE_TYPE_WIFI = 2
-NM_DEVICE_TYPE_NAMES = {NM_DEVICE_TYPE_ETHERNET: "eth", NM_DEVICE_TYPE_WIFI: "wifi"}
+NM_DEVICE_TYPE_MODEM = 8
+NM_DEVICE_TYPE_NAMES = {NM_DEVICE_TYPE_ETHERNET: "eth", NM_DEVICE_TYPE_WIFI: "wifi", NM_DEVICE_TYPE_MODEM: "cell"}
 
 # NMDeviceState (subset)
 NM_DEVICE_STATE_ACTIVATED = 100
@@ -102,6 +118,22 @@ NM_802_11_AP_SEC_KEY_MGMT_SAE = 0x400  # WPA3-Personal
 NM_CONNECT_TIMEOUT = 30  # seconds to wait for one WiFi association attempt to succeed or fail
 NM_SCAN_GRACE_PERIOD = 4  # seconds to let RequestScan populate results before reading them
 
+# ModemManager - a separate D-Bus service from NetworkManager, reached over
+# the same system bus. NetworkManager can activate a cellular *connection*
+# once one exists (see _connect_cellular), but has no visibility into the
+# modem/SIM identity behind it - IMEI/IMSI/ICCID and SIM lock state only
+# come from here.
+MM_BUS_NAME = "org.freedesktop.ModemManager1"
+MM_ROOT_PATH = "/org/freedesktop/ModemManager1"
+MM_MODEM_IFACE = "org.freedesktop.ModemManager1.Modem"
+MM_SIM_IFACE = "org.freedesktop.ModemManager1.Sim"
+MM_OBJECT_MANAGER_IFACE = "org.freedesktop.DBus.ObjectManager"
+
+# MMModemLock - NONE=1 means no PIN/PUK currently required. Not yet
+# confirmed against real hardware.
+# https://www.freedesktop.org/software/ModemManager/api/latest/ModemManager-Flags-and-Enumerations.html
+MM_MODEM_LOCK_NONE = 1
+
 
 async def _nm_interface(bus, path: str, iface: str):
     introspection = await bus.introspect(NM_BUS_NAME, path)
@@ -116,6 +148,57 @@ async def _get_wifi_device_path(bus):
         if await dev.get_device_type() == NM_DEVICE_TYPE_WIFI:
             return path
     return None
+
+
+async def _get_modem_device_path(bus):
+    nm = await _nm_interface(bus, NM_ROOT_PATH, NM_IFACE)
+    for path in await nm.call_get_devices():
+        dev = await _nm_interface(bus, path, NM_DEVICE_IFACE)
+        if await dev.get_device_type() == NM_DEVICE_TYPE_MODEM:
+            return path
+    return None
+
+
+async def _get_modem_info(bus) -> dict:
+    """Returns a dict describing the first modem ModemManager knows about -
+    modem_path/imei/unlock_required always present, sim_path/imsi/iccid
+    only if a SIM is actually inserted - or {} if there's no modem at all.
+    This is the ModemManager side of cellular support; NetworkManager (see
+    _get_modem_device_path/_connect_cellular) only knows the modem exists
+    as a network device, not the SIM/hardware identity behind it."""
+    introspection = await bus.introspect(MM_BUS_NAME, MM_ROOT_PATH)
+    proxy = bus.get_proxy_object(MM_BUS_NAME, MM_ROOT_PATH, introspection)
+    # GetManagedObjects (standard org.freedesktop.DBus.ObjectManager) is how
+    # ModemManager enumerates modems - unlike NetworkManager's own
+    # GetDevices, there's no equivalent "just list them" method directly on
+    # the ModemManager1 root interface.
+    om = proxy.get_interface(MM_OBJECT_MANAGER_IFACE)
+    objects = await om.call_get_managed_objects()
+    for path, interfaces in objects.items():
+        modem_props = interfaces.get(MM_MODEM_IFACE)
+        if modem_props is None:
+            continue
+        lock = modem_props.get("UnlockRequired")
+        imei = modem_props.get("EquipmentIdentifier")
+        info = {
+            "modem_path": path,
+            "imei": imei.value if imei else "",
+            "unlock_required": lock is not None and lock.value != MM_MODEM_LOCK_NONE,
+        }
+        sim_variant = modem_props.get("Sim")
+        sim_path = sim_variant.value if sim_variant else None
+        if sim_path and sim_path != "/":  # "/" is D-Bus's convention for "no object"
+            info["sim_path"] = sim_path
+            try:
+                sim_introspection = await bus.introspect(MM_BUS_NAME, sim_path)
+                sim_proxy = bus.get_proxy_object(MM_BUS_NAME, sim_path, sim_introspection)
+                sim = sim_proxy.get_interface(MM_SIM_IFACE)
+                info["imsi"] = await sim.get_imsi()
+                info["iccid"] = await sim.get_sim_identifier()
+            except Exception as e:
+                logger.warning(f"Could not read SIM properties from {sim_path}: {e}")
+        return info
+    return {}
 
 
 async def _delete_existing_wifi_connections(bus, ssid: str) -> None:
@@ -445,16 +528,23 @@ class ProvisioningSession:
                 name = NM_DEVICE_TYPE_NAMES.get(await dev.get_device_type())
                 if name is None:
                     continue  # not something the app can pick (loopback, bridge, veth, ...)
-                state = await dev.get_state()
-                msg = {
-                    "t": "if",
-                    "name": name,
-                    "mac": await dev.get_hw_address(),
-                    "status": "ready" if state >= NM_DEVICE_STATE_ACTIVATED else "unavailable",
-                    "static_ip": 1,
-                }
-                if name == "wifi":
-                    msg["scan"] = 1
+                if name == "cell":
+                    # Cellular's "if" fields (imei/imsi/iccid/pin/apn) come
+                    # from ModemManager, not NetworkManager's generic
+                    # mac/status/static_ip shape used below - see
+                    # _cell_if_message.
+                    msg = await self._cell_if_message()
+                else:
+                    state = await dev.get_state()
+                    msg = {
+                        "t": "if",
+                        "name": name,
+                        "mac": await dev.get_hw_address(),
+                        "status": "ready" if state >= NM_DEVICE_STATE_ACTIVATED else "unavailable",
+                        "static_ip": 1,
+                    }
+                    if name == "wifi":
+                        msg["scan"] = 1
                 self.service.send(msg)
                 sent_any = True
             if not sent_any:
@@ -463,6 +553,27 @@ class ProvisioningSession:
             logger.error(f"Failed to enumerate network interfaces via NetworkManager: {e}")
             self.service.send({"t": "if", "name": "eth", "status": "ready"})
         self.service.send({"t": "ifs_end"})
+
+    async def _cell_if_message(self) -> dict:
+        # apn is always reported as 1 (real-world cellular essentially
+        # always needs one, unlike WiFi's conditional password) - the
+        # protocol doc doesn't spell this out explicitly, this is our own
+        # interpretation of the flag's meaning.
+        try:
+            info = await _get_modem_info(self.bus)
+        except Exception as e:
+            logger.warning(f"Could not read modem/SIM info via ModemManager: {e}")
+            info = {}
+        return {
+            "t": "if",
+            "name": "cell",
+            "imei": info.get("imei", ""),
+            "imsi": info.get("imsi", ""),
+            "iccid": info.get("iccid", ""),
+            "scan": 0,
+            "pin": 1 if info.get("unlock_required") else 0,
+            "apn": 1,
+        }
 
     def _handle_scan(self, data) -> None:
         self._spawn(self._do_scan())
@@ -516,7 +627,7 @@ class ProvisioningSession:
         if unknown:
             self.service.send({"t": "set_fail"})
             return
-        for field in ("blynk", "host", "ssid", "pass", "ip", "mask", "gw", "dns", "dns2"):
+        for field in ("if", "blynk", "host", "ssid", "pass", "pin", "apn", "ip", "mask", "gw", "dns", "dns2"):
             if field in data:
                 self._pending[field] = data[field]
         self.service.send({"t": "set_ok"})
@@ -531,8 +642,38 @@ class ProvisioningSession:
         self._spawn(self._do_connect(token, self._pending.get("host")))
 
     async def _do_connect(self, token: str, host) -> None:
+        interface = self._pending.get("if")
         ssid = self._pending.get("ssid")
-        if ssid:
+        # did_network_change drives force_restart below - true whenever we
+        # actually just (re)activated a network connection, wifi or
+        # cellular, since either can leave mqtt-bridge's container unable
+        # to resolve the Blynk host on the old resolver (see the
+        # force_restart comment further down).
+        did_network_change = False
+
+        if interface == "cell":
+            did_network_change = True
+            self.service.send({"t": "status", "s": "connecting_net"})
+            try:
+                ok, reason = await self._connect_cellular(self._pending.get("pin"), self._pending.get("apn"))
+            except Exception as e:
+                logger.error(f"Cellular connect failed: {e}")
+                ok, reason = False, "generic"
+            if not ok:
+                self.service.send({"t": "net_fail", "reason": reason})
+                # Only forget the PIN just tried (matches the WiFi
+                # credentials-only clear below) - apn is very likely still
+                # correct even if the PIN was wrong, no reason to make the
+                # app resend it too.
+                self._pending.pop("pin", None)
+                return
+        # `if` is expected to be sent by any current app build (see the
+        # protocol doc's connect-validation rule), but falling back to
+        # "ssid was staged" when it's absent preserves this project's
+        # original behaviour for any older/unknown client that never sends
+        # an explicit interface selector at all.
+        elif interface == "wifi" or (not interface and ssid):
+            did_network_change = True
             self.service.send({"t": "status", "s": "connecting_net"})
             try:
                 ok, reason = await self._connect_wifi(ssid, self._pending.get("pass"))
@@ -561,19 +702,99 @@ class ProvisioningSession:
         # hardware: ~12s) - running it inline would freeze this whole
         # asyncio loop, so no BLE notification (including the ones just
         # below) would go out until it finished. force_restart when a real
-        # WiFi (re)connect just happened - confirmed on real hardware that
-        # mqtt-bridge's container can be left unable to resolve the Blynk
-        # host after a WiFi network change even when the bridge conf
+        # network (re)connect just happened - confirmed on real hardware
+        # that mqtt-bridge's container can be left unable to resolve the
+        # Blynk host after a WiFi network change even when the bridge conf
         # content itself is unchanged (e.g. moving between two networks
-        # with different DNS servers, same Blynk server/token either way).
+        # with different DNS servers, same Blynk server/token either way) -
+        # the same reasoning applies to a fresh cellular connection.
         await asyncio.get_event_loop().run_in_executor(
-            None, lambda: self.bridge.ensure_current(force_restart=bool(ssid))
+            None, lambda: self.bridge.ensure_current(force_restart=did_network_change)
         )
 
         self.service.send({"t": "status", "s": "connected"})
         await asyncio.sleep(0.3)  # let the notification flush before the link drops
         self._result = True
         self._done.set()
+
+    async def _connect_cellular(self, pin, apn) -> tuple:
+        """SIM/lock state comes from ModemManager (NetworkManager doesn't
+        expose IMEI/IMSI/ICCID/lock state itself), but the actual
+        connection is activated via NetworkManager - same
+        AddAndActivateConnection/StateChanged pattern as _connect_wifi,
+        just a "gsm" connection type instead of "802-11-wireless"."""
+        try:
+            info = await _get_modem_info(self.bus)
+        except Exception as e:
+            logger.error(f"Could not query ModemManager: {e}")
+            return False, "generic"
+        if not info:
+            return False, "generic"
+        if "sim_path" not in info:
+            return False, "sim_missing"
+        if info["unlock_required"]:
+            if not pin:
+                return False, "sim_locked"
+            try:
+                sim_introspection = await self.bus.introspect(MM_BUS_NAME, info["sim_path"])
+                sim_proxy = self.bus.get_proxy_object(MM_BUS_NAME, info["sim_path"], sim_introspection)
+                sim = sim_proxy.get_interface(MM_SIM_IFACE)
+                await sim.call_send_pin(pin)
+            except Exception as e:
+                logger.error(f"SIM PIN unlock failed: {e}")
+                return False, "sim_wrong_pin"
+
+        modem_device_path = await _get_modem_device_path(self.bus)
+        if modem_device_path is None:
+            return False, "generic"
+
+        settings = {
+            "connection": {
+                "id": Variant("s", "blynk-cellular"),
+                "type": Variant("s", "gsm"),
+            },
+            "gsm": {
+                "apn": Variant("s", apn or ""),
+            },
+        }
+
+        dev = await _nm_interface(self.bus, modem_device_path, NM_DEVICE_IFACE)
+        result = {}
+        done = asyncio.Event()
+
+        def on_state_changed(new_state, old_state, reason):
+            if new_state == NM_DEVICE_STATE_ACTIVATED:
+                result["ok"] = True
+                done.set()
+            elif new_state == NM_DEVICE_STATE_FAILED:
+                result["ok"] = False
+                result["reason"] = reason
+                done.set()
+
+        async def activate():
+            nm = await _nm_interface(self.bus, NM_ROOT_PATH, NM_IFACE)
+            # Same reasoning as _connect_wifi's activate(): wrap the
+            # activation call itself, not just the wait, in case a bad
+            # APN/no signal leaves AddAndActivateConnection itself hanging
+            # rather than promptly reporting failure via StateChanged.
+            await nm.call_add_and_activate_connection(settings, modem_device_path, "/")
+            await done.wait()
+
+        dev.on_state_changed(on_state_changed)
+        try:
+            try:
+                await asyncio.wait_for(activate(), timeout=NM_CONNECT_TIMEOUT)
+            except asyncio.TimeoutError:
+                return False, "timeout"
+        finally:
+            dev.off_state_changed(on_state_changed)
+
+        if result.get("ok"):
+            return True, None
+        # Not attempting to enumerate every possible GSM-specific NM
+        # failure reason up front - same fallback-to-generic/timeout
+        # behaviour as _map_nm_failure_reason already has for WiFi.
+        return False, _map_nm_failure_reason(result.get("reason"))
 
     async def _connect_wifi(self, ssid: str, password) -> tuple:
         """Activates a WiFi connection via NetworkManager and waits on the
@@ -654,7 +875,7 @@ class ProvisioningSession:
         if not self.reprovisioning:
             self.config.auth_token = None
             self.config.save()
-        for field in ("ssid", "pass", "ip", "mask", "gw", "dns", "dns2"):
+        for field in ("if", "ssid", "pass", "pin", "apn", "ip", "mask", "gw", "dns", "dns2"):
             self._pending.pop(field, None)
         self.service.send({"t": "reset_ok"})
 
