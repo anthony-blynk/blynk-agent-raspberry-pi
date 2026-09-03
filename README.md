@@ -1,18 +1,18 @@
 # Blynk Edge Agent
 
-Turns a Raspberry Pi into a Blynk device. A local MQTT broker acts as a bridge to Blynk Cloud and handles the connection complexity — auth, certificates, all of it — so every other service on the Pi just speaks plain local MQTT, while the whole stack stays updatable over the air through Blynk OTA.
+Makes running Blynk on a Linux device effortless and powerful.
 
-## Install
+A **Blynk Agent** handles all Blynk communication and control functions, paired with an **MQTT Bridge** that gives every application and process on the device seamless, concurrent access to Blynk over one shared, always-on connection — auth, certificates, and connection complexity handled entirely for you.
 
-Get up and running on a fresh Pi with a single command:
+- **One-command install** — a single script gets a fresh device fully connected to Blynk.
+- **Runs on a diverse range of devices** — Raspberry Pi, NVIDIA edge AI platforms, and i.MX8-based industrial gateways.
+- **Flexible provisioning** — Bluetooth LE provisioning via the Blynk app, or a static token (e.g. shared via QR code) for pre-configured fleets — seamlessly over Ethernet or WiFi.
+- **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
+- **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.
+- **Secure remote access** — a built-in Blynk Terminal gives you a real shell on the device with no VPN and no exposed ports.
+- **Built-in observability** — automated device metrics gathering and a ready-made Blynk dashboard for monitoring device health.
 
-```
-curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-edge-agent/master/install.sh | bash
-```
-
-Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per Pi — see [Updating](#updating).
-
-Blynk Enterprise clients running their own server and a branded mobile app can also set a vendor prefix at install time (`BLYNK_VENDOR_PREFIX`, defaults to `Blynk`) - it replaces "Blynk" in the BLE-advertised device name (e.g. `Blynk Device-971K` → `Acme Device-971K`) and the provisioning `vendor` field, so the device never shows unbranded "Blynk" text during setup.
+Where an MCU runs a single firmware, Linux runs many applications and processes side by side — Blynk Edge Agent keeps every benefit of that environment intact while giving all of them effortless, concurrent access to Blynk.
 
 ## How it works
 
@@ -51,6 +51,33 @@ flowchart LR
 - You can add your own service(s) to `docker-compose.yml` alongside mqtt-bridge and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
 - Blynk's own topics (`ds/#`, `downlink/#`, etc. - see [the MQTT API docs](https://docs.blynk.io/en/blynk.cloud-mqtt-api/device-mqtt-api/topic-structure)) are what actually reach Blynk Cloud through the bridge. Your apps are free to use any other topics on the local broker too - those just stay local and never interact with Blynk at all.
 
+## Install
+
+Get up and running on a fresh Pi with a single command:
+
+```
+curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-edge-agent/master/install.sh | bash
+```
+
+Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per Pi — see [Updating](#updating).
+
+Blynk Enterprise clients running their own server and a branded mobile app can also set a vendor prefix at install time (`BLYNK_VENDOR_PREFIX`, defaults to `Blynk`) - it replaces "Blynk" in the BLE-advertised device name (e.g. `Blynk Device-971K` → `Acme Device-971K`) and the provisioning `vendor` field, so the device never shows unbranded "Blynk" text during setup.
+
+## Testing the connection
+
+Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the Pi's own shell and watch it show up on the dashboard:
+
+First:
+```
+sudo apt install python3-paho-mqtt
+```
+Then you can publish to the Blynk datastream with:
+```
+python3 -c "import paho.mqtt.publish as publish; publish.single('ds/Test', payload='42', hostname='localhost', port=1883, qos=1)"
+```
+
+Create a datastream named `Test` (type Integer) for the device's template first, or swap in any datastream you've already created - port `1883` assumes nothing else on the Pi is already using it (see [Troubleshooting](#troubleshooting) below if it is). See `test/` for more complete pub/sub examples.
+
 ## WiFi provisioning
 
 A device with no stored Blynk auth token (`blynk.env` left blank during `install.sh`, or after a `downlink/reconfigure`) advertises over Bluetooth LE and runs the Blynk app's provisioning flow ("Blynk.Inject"): the app scans, connects, requests the device's real network interfaces, and - for a WiFi interface - requests a scan and lets the user pick an SSID, enter a password, and optionally set a static IP. The device configures WiFi and the Blynk connection through NetworkManager over D-Bus (the host's, not the container's own - reached over the same D-Bus socket already used for BlueZ), reporting live status back over the same BLE link the whole time, including specific failure reasons (e.g. a wrong password) so the app can prompt for corrected credentials without needing to reconnect.
@@ -83,6 +110,17 @@ To set it up, create two datastreams for the device's template - `AgentTerminal`
 Updates go through Blynk OTA, not by re-running `install.sh`. Grab the latest [`docker-compose.yml`](docker-compose.yml) (merging in your own additions if you've customized it) and upload it through your Blynk console's OTA feature for that device.
 
 ## Troubleshooting
+
+### `port is already allocated` on `mqtt-bridge` (something else already uses 1883)
+
+Confirmed on a device already running Node-RED with its own MQTT broker. The `agent`/`mqtt-bridge` containers still connect to each other over Docker's internal network regardless of any host-side port mapping - the `127.0.0.1:1883:1883` mapping in `docker-compose.yml` only exists for convenience access from outside Docker (e.g. the [Testing the connection](#testing-the-connection) snippet above, or `test/*.py`). Safe to remap without affecting the bridge itself:
+
+```
+sudo sed -i 's/127.0.0.1:1883:1883/127.0.0.1:18830:1883/' /opt/blynk/docker-compose.yml
+docker compose -f /opt/blynk/docker-compose.yml up -d
+```
+
+Use the new port for any host-side script connecting directly to the broker.
 
 ### BLE provisioning: device won't advertise / registering the advertisement fails
 
