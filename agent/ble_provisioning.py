@@ -164,10 +164,18 @@ MM_MODEM_IFACE = "org.freedesktop.ModemManager1.Modem"
 MM_SIM_IFACE = "org.freedesktop.ModemManager1.Sim"
 MM_OBJECT_MANAGER_IFACE = "org.freedesktop.DBus.ObjectManager"
 
-# MMModemLock - NONE=1 means no PIN/PUK currently required. Not yet
-# confirmed against real hardware.
+# MMModemLock - NONE=1 means nothing currently required. SIM_PIN=2 is the
+# ordinary "enter your SIM PIN" lock this code actually handles. ModemManager
+# reports several OTHER lock types (SIM_PIN2=7 for the separate, optional
+# PIN2 used only for restricted operations like fixed-dialing lists;
+# PH_SIM_PIN and various PH_NET*/PH_CORP* network-personalization locks)
+# that do NOT block normal registration/data service - confirmed on real
+# hardware where a SIM with no PIN set (works fine in other IoT devices)
+# reported UnlockRequired=sim-pin2, which this code was wrongly treating as
+# "needs a PIN from the user" before this fix.
 # https://www.freedesktop.org/software/ModemManager/api/latest/ModemManager-Flags-and-Enumerations.html
 MM_MODEM_LOCK_NONE = 1
+MM_MODEM_LOCK_SIM_PIN = 2
 
 
 async def _nm_interface(bus, path: str, iface: str):
@@ -218,7 +226,7 @@ async def _get_modem_info(bus) -> dict:
         info = {
             "modem_path": path,
             "imei": imei.value if imei else "",
-            "unlock_required": lock is not None and lock.value != MM_MODEM_LOCK_NONE,
+            "unlock_required": lock is not None and lock.value == MM_MODEM_LOCK_SIM_PIN,
         }
         sim_variant = modem_props.get("Sim")
         sim_path = sim_variant.value if sim_variant else None
