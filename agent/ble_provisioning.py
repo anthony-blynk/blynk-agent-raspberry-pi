@@ -101,6 +101,47 @@ async def _get_adapter(bus, path: str = ADAPTER_PATH) -> Adapter:
     return Adapter(proxy)
 
 
+async def _forget_bonded_devices(bus, path: str = ADAPTER_PATH) -> None:
+    """Each provisioning session should start from a clean Bluetooth state.
+    Confirmed on real hardware: reconnecting an already-bonded central
+    against this container's freshly re-registered GATT service (it
+    re-registers from scratch on every reprovisioning cycle) can leave the
+    central relying on a stale cached GATT database - the connection
+    proceeds through pairing/encryption just fine, but the app then fails
+    with a generic "couldn't identify the device type" error, having never
+    actually read any of our characteristics at all (confirmed via a btmon
+    capture with zero traffic on our service's UUID). Forgetting the app's
+    own previous bond up front forces a full fresh pairing and GATT
+    rediscovery every time a provisioning session starts, which sidesteps
+    the whole stale-cache failure category rather than needing to reverse
+    engineer BlueZ's exact caching/hash-invalidation behavior."""
+    try:
+        root_introspection = await bus.introspect("org.bluez", "/")
+        root_proxy = bus.get_proxy_object("org.bluez", "/", root_introspection)
+        om = root_proxy.get_interface("org.freedesktop.DBus.ObjectManager")
+        objects = await om.call_get_managed_objects()
+    except Exception as e:
+        logger.warning(f"Could not enumerate BlueZ devices to forget bonds: {e}")
+        return
+
+    adapter_introspection = await bus.introspect("org.bluez", path)
+    adapter_proxy = bus.get_proxy_object("org.bluez", path, adapter_introspection)
+    adapter_iface = adapter_proxy.get_interface("org.bluez.Adapter1")
+
+    for device_path, interfaces in objects.items():
+        device_props = interfaces.get("org.bluez.Device1")
+        if device_props is None:
+            continue
+        paired = device_props.get("Paired")
+        if not (paired and paired.value):
+            continue
+        try:
+            await adapter_iface.call_remove_device(device_path)
+            logger.info(f"Forgot previously bonded device {device_path} before starting BLE provisioning")
+        except Exception as e:
+            logger.warning(f"Could not remove bonded device {device_path}: {e}")
+
+
 SERVICE_UUID = "95e30001-5737-45a9-a092-a88e2e5dd659"
 RX_UUID = "95e30002-5737-45a9-a092-a88e2e5dd659"
 TX_UUID = "95e30003-5737-45a9-a092-a88e2e5dd659"
@@ -948,6 +989,7 @@ class ProvisioningSession:
         try:
             adapter = await _get_adapter(bus)
             await adapter.set_powered(True)
+            await _forget_bonded_devices(bus)
 
             await self.service.register(bus, adapter=adapter)
 
