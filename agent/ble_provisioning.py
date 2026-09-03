@@ -71,15 +71,15 @@ class NoInputNoOutputAgent(BaseAgent):
 
     @method()
     def RequestAuthorization(self, device: "o"):  # type: ignore
-        pass
+        logger.info(f"BLE pairing agent: RequestAuthorization({device})")
 
     @method()
     def RequestConfirmation(self, device: "o", passkey: "u"):  # type: ignore
-        pass
+        logger.info(f"BLE pairing agent: RequestConfirmation({device}, {passkey})")
 
     @method()
     def AuthorizeService(self, device: "o", uuid: "s"):  # type: ignore
-        pass
+        logger.info(f"BLE pairing agent: AuthorizeService({device}, {uuid})")
 
 
 ADAPTER_PATH = "/org/bluez/hci0"
@@ -942,6 +942,7 @@ class ProvisioningSession:
 
             agent = NoInputNoOutputAgent()
             await agent.register(bus)
+            logger.info("BLE pairing agent registered with BlueZ")
 
             name = device_name(self.config.vendor_prefix)
             # A 128-bit custom service UUID plus this name doesn't fit in
