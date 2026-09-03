@@ -52,25 +52,24 @@ logger = logging.getLogger(__name__)
 
 
 class AutoAcceptPairingAgent(BaseAgent):
-    """Registering with NoInputNoOutput capability (the spec-correct
-    description of this device - no display, no keyboard) causes bluetoothd
-    to fail LE Secure Connections pairing outright ("Numeric comparison
-    failed"), regardless of whether RequestConfirmation is implemented -
-    confirmed on real hardware via repeated btmon captures showing BlueZ
-    auto-sending a negative confirmation reply within ~0.3ms of the request,
-    far too fast to be a real round-trip into this process. This matches a
-    known BlueZ behavior (bluez/bluez#650 on GitHub): BlueZ routes LE SC
-    pairing through Numeric Comparison regardless of NoInputNoOutput, and
-    doesn't treat a NoInputNoOutput-registered agent as valid for that path.
-    Registering as KeyboardDisplay instead makes BlueZ actually deliver the
-    RequestConfirmation call here rather than auto-rejecting it - confirmed
-    fix on real hardware. This device still can't really display/compare a
-    passkey, so unconditionally accepting is the only sensible response;
-    the central (phone) may show its own "does this code match?" dialog
-    since it believes our side supports it, unlike true Just Works."""
+    """Reverted back to NoInputNoOutput (rc5 briefly switched this to
+    KeyboardDisplay to work around a BlueZ LE Secure Connections bug -
+    bluez/bluez#650 - where BlueZ auto-fails Numeric Comparison pairing
+    against a NoInputNoOutput-registered agent instead of calling
+    RequestConfirmation). That fix came with a real regression, confirmed
+    on real hardware: declaring KeyboardDisplay tells Android's own
+    Bluetooth stack this peripheral can meaningfully display/compare a
+    passkey, which made Android start opportunistically bonding on every
+    connection - including plain WiFi provisioning, which never triggered
+    pairing at all before (this device's characteristics have never
+    required encryption; a bonded link is Android's own choice, not
+    something this GATT service asks for). Back to NoInputNoOutput
+    prioritizes restoring WiFi's original no-pairing behavior; whether
+    cellular's original pairing failure returns as a result still needs
+    checking on real hardware."""
 
     def __init__(self):
-        super().__init__(AgentCapability.KEYBOARD_DISPLAY)
+        super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
 
     @method()
     def RequestAuthorization(self, device: "o"):  # type: ignore
