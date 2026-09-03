@@ -271,8 +271,7 @@ class ComposeManager:
     def update_from_url(self, url: str) -> bool:
         try:
             logger.info(f"Downloading compose file from: {url}")
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
+            response = self._get_with_retry(url)
 
             try:
                 new_data = yaml.safe_load(response.text)
@@ -303,12 +302,61 @@ class ComposeManager:
 
             return self._apply_via_helper(backup_path)
 
+        except requests.exceptions.ConnectionError as e:
+            # Distinct from the broader RequestException catch below:
+            # confirmed on real hardware (a Pi Zero up 9 days) that this
+            # specific failure - DNS resolution failing inside the agent's
+            # own container while `curl` on the host resolves the same
+            # host fine - isn't transient. Docker only writes a
+            # container's /etc/resolv.conf once, at container start, and
+            # never refreshes it while running even if the host's DNS
+            # servers change later - the retries in _get_with_retry all
+            # hit the identical stale resolver, so a manual `docker
+            # restart` was the only thing that actually fixed it (twice,
+            # 30 minutes apart, same error both times). Same root cause
+            # already handled for mqtt-bridge (see MqttBridge.ensure_current's
+            # force_restart) - this does the equivalent for the agent's own
+            # container, so the *next* OTA attempt gets a fresh resolver
+            # instead of needing someone to notice and restart it by hand.
+            logger.error(f"Failed to download compose file (connection/DNS error): {e}")
+            self._restart_self()
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download compose file: {e}")
             return False
         except OSError as e:
             logger.error(f"Failed to write compose file: {e}")
             return False
+
+    @staticmethod
+    def _restart_self() -> None:
+        try:
+            container_name = socket.gethostname()
+            logger.warning(f"Restarting own container ({container_name}) to refresh DNS before the next OTA attempt")
+            subprocess.run(["docker", "restart", "-t", "0", container_name], timeout=30)
+        except Exception as e:
+            # If this container gets torn down mid-command (the expected,
+            # normal outcome of a self-restart), subprocess.run may never
+            # get to return at all - there's nothing meaningful left to do
+            # with an exception here either way, just don't let it crash
+            # whatever's left of this call.
+            logger.error(f"Failed to restart own container: {e}")
+
+    @staticmethod
+    def _get_with_retry(url: str, attempts: int = 4, backoff_seconds: float = 3.0) -> requests.Response:
+        last_error: Optional[requests.exceptions.RequestException] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt < attempts:
+                    delay = backoff_seconds * attempt
+                    logger.warning(f"OTA download attempt {attempt}/{attempts} failed ({e}), retrying in {delay:.0f}s")
+                    time.sleep(delay)
+        raise last_error
 
     @staticmethod
     def get_version_from_data(compose_data: dict) -> Optional[str]:
