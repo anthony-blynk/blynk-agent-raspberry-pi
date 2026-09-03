@@ -1,12 +1,12 @@
 # Blynk Edge Agent
 
-Makes running Blynk on a Linux device effortless and powerful.
+Makes connecting a Linux device to Blynk effortless and powerful.
 
 A **Blynk Agent** handles all Blynk communication and control functions, paired with an **MQTT Bridge** that gives every application and process on the device seamless, concurrent access to Blynk over one shared, always-on connection — auth, certificates, and connection complexity handled entirely for you.
 
 - **One-command install** — a single script gets a fresh device fully connected to Blynk.
-- **Runs on a diverse range of devices** — Raspberry Pi, NVIDIA edge AI platforms, and i.MX8-based industrial gateways.
-- **Flexible provisioning** — Bluetooth LE provisioning via the Blynk app, or a static token (e.g. shared via QR code) for pre-configured fleets — seamlessly over Ethernet or WiFi.
+- **Runs on a diverse range of devices** — Raspberry Pi's, NVIDIA edge AI platforms, or i.MX8-based industrial gateways.
+- **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet or WiFi.
 - **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
 - **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.
 - **Secure remote access** — a built-in Blynk Terminal gives you a real shell on the device with no VPN and no exposed ports.
