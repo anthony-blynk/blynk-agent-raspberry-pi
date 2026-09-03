@@ -51,23 +51,26 @@ from dbus_next.constants import PropertyAccess
 logger = logging.getLogger(__name__)
 
 
-class NoInputNoOutputAgent(BaseAgent):
-    """bluez-peripheral's own NoIoAgent (org.bluez.Agent1, NoInputNoOutput
-    capability) only implements RequestAuthorization/AuthorizeService, not
-    RequestConfirmation - confirmed on real hardware that BlueZ calls
-    RequestConfirmation anyway for at least some LE Secure Connections
-    pairing negotiations (observed via btmon: "Confirm hint: 0x01", i.e.
-    BlueZ itself already knows there's nothing meaningful to confirm), even
-    though this device has no display to show/verify a passkey with. An
-    agent object that doesn't export the method BlueZ tries to call fails
-    that call, which BlueZ then treats as a rejection - pairing fails
-    outright ("Numeric comparison failed") even though nothing was actually
-    wrong. A NoInputNoOutput device can't meaningfully validate a passkey
-    either way, so unconditionally accepting is the correct, spec-compliant
-    response - that's what "Just Works" means at the application layer."""
+class AutoAcceptPairingAgent(BaseAgent):
+    """Registering with NoInputNoOutput capability (the spec-correct
+    description of this device - no display, no keyboard) causes bluetoothd
+    to fail LE Secure Connections pairing outright ("Numeric comparison
+    failed"), regardless of whether RequestConfirmation is implemented -
+    confirmed on real hardware via repeated btmon captures showing BlueZ
+    auto-sending a negative confirmation reply within ~0.3ms of the request,
+    far too fast to be a real round-trip into this process. This matches a
+    known BlueZ behavior (bluez/bluez#650 on GitHub): BlueZ routes LE SC
+    pairing through Numeric Comparison regardless of NoInputNoOutput, and
+    doesn't treat a NoInputNoOutput-registered agent as valid for that path.
+    Registering as KeyboardDisplay instead makes BlueZ actually deliver the
+    RequestConfirmation call here rather than auto-rejecting it - confirmed
+    fix on real hardware. This device still can't really display/compare a
+    passkey, so unconditionally accepting is the only sensible response;
+    the central (phone) may show its own "does this code match?" dialog
+    since it believes our side supports it, unlike true Just Works."""
 
     def __init__(self):
-        super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
+        super().__init__(AgentCapability.KEYBOARD_DISPLAY)
 
     @method()
     def RequestAuthorization(self, device: "o"):  # type: ignore
@@ -940,7 +943,7 @@ class ProvisioningSession:
 
             await self.service.register(bus, adapter=adapter)
 
-            agent = NoInputNoOutputAgent()
+            agent = AutoAcceptPairingAgent()
             await agent.register(bus)
             logger.info("BLE pairing agent registered with BlueZ")
 
