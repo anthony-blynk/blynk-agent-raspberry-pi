@@ -564,6 +564,16 @@ class ProvisioningSession:
         except Exception as e:
             logger.warning(f"Could not read modem/SIM info via ModemManager: {e}")
             info = {}
+        # Confirmed on real hardware: ModemManager's UnlockRequired can
+        # report a non-NONE value even with no SIM inserted at all (the
+        # property just isn't meaningful without a SIM to have an opinion
+        # about) - this caused a real false "pin":1 with no SIM present,
+        # which is almost certainly why the app tried to initiate BLE
+        # pairing/bonding for the first time in this whole session right
+        # after receiving it. Only trust unlock_required once a SIM is
+        # actually known to exist, same ordering _connect_cellular already
+        # uses (sim_missing is checked before ever looking at lock state).
+        pin_required = bool(info.get("unlock_required")) and "sim_path" in info
         return {
             "t": "if",
             "name": "cell",
@@ -571,7 +581,7 @@ class ProvisioningSession:
             "imsi": info.get("imsi", ""),
             "iccid": info.get("iccid", ""),
             "scan": 0,
-            "pin": 1 if info.get("unlock_required") else 0,
+            "pin": 1 if pin_required else 0,
             "apn": 1,
         }
 
