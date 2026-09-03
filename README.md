@@ -21,7 +21,7 @@ flowchart LR
     console(["Blynk Console / App"])
     cloud(["Blynk Cloud"])
 
-    subgraph pi["Raspberry Pi"]
+    subgraph pi["Linux Device"]
         subgraph compose["docker compose"]
             mqttbridge["mqtt-bridge<br/>local broker :1883"]
             agent["agent<br/>OTA / ping / reboot / redirect"]
@@ -45,27 +45,27 @@ flowchart LR
 ```
 
 - **mqtt-bridge** and **agent** both run as Docker containers, managed by the same `docker-compose.yml` the agent OTA-updates.
-- **mqtt-bridge** bridges the local broker to Blynk Cloud. Only mqtt-bridge holds the Blynk auth token (for that cloud bridge connection) - anything else on the Pi just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
-- That local broker is only reachable on the Pi itself (`127.0.0.1:1883`) - nothing outside the Pi can connect to it.
+- **mqtt-bridge** bridges the local broker to Blynk Cloud. Only mqtt-bridge holds the Blynk auth token (for that cloud bridge connection) - anything else on the device just connects to the local broker on plain, unauthenticated MQTT. Your own apps never need to know about Blynk credentials at all.
+- That local broker is only reachable on the device itself (`127.0.0.1:1883`) - nothing outside the device can connect to it.
 - **agent** subscribes to Blynk's downlink control topics: `downlink/ota/json` (downloads, validates, and applies a new `docker-compose.yml`, with automatic rollback on failure), `downlink/ping`, `downlink/reboot`, `downlink/redirect`, and `downlink/reconfigure`.
-- You can add your own service(s) to `docker-compose.yml` alongside mqtt-bridge and agent, and/or just run your own programs directly on the Pi (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
+- You can add your own service(s) to `docker-compose.yml` alongside mqtt-bridge and agent, and/or just run your own programs directly on the device (outside Docker) - either way, they talk to the local broker, which is already bridged to Blynk. See `test/` for minimal pub/sub examples.
 - Blynk's own topics (`ds/#`, `downlink/#`, etc. - see [the MQTT API docs](https://docs.blynk.io/en/blynk.cloud-mqtt-api/device-mqtt-api/topic-structure)) are what actually reach Blynk Cloud through the bridge. Your apps are free to use any other topics on the local broker too - those just stay local and never interact with Blynk at all.
 
 ## Install
 
-Get up and running on a fresh Pi with a single command:
+Get up and running on a fresh device with a single command:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-edge-agent/master/install.sh | bash
 ```
 
-Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per Pi — see [Updating](#updating).
+Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per device — see [Updating](#updating).
 
 Blynk Enterprise clients running their own server and a branded mobile app can also set a vendor prefix at install time (`BLYNK_VENDOR_PREFIX`, defaults to `Blynk`) - it replaces "Blynk" in the BLE-advertised device name (e.g. `Blynk Device-971K` → `Acme Device-971K`) and the provisioning `vendor` field, so the device never shows unbranded "Blynk" text during setup.
 
 ## Testing the connection
 
-Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the Pi's own shell and watch it show up on the dashboard:
+Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the dashboard:
 
 First:
 ```
@@ -76,7 +76,7 @@ Then you can publish to the Blynk datastream with:
 python3 -c "import paho.mqtt.publish as publish; publish.single('ds/Test', payload='42', hostname='localhost', port=1883, qos=1)"
 ```
 
-Create a datastream named `Test` (type Integer) for the device's template first, or swap in any datastream you've already created - port `1883` assumes nothing else on the Pi is already using it (see [Troubleshooting](#troubleshooting) below if it is). See `test/` for more complete pub/sub examples.
+Create a datastream named `Test` (type Integer) for the device's template first, or swap in any datastream you've already created - port `1883` assumes nothing else on the device is already using it (see [Troubleshooting](#troubleshooting) below if it is). See `test/` for more complete pub/sub examples.
 
 ## WiFi provisioning
 
@@ -94,7 +94,7 @@ To set it up, create these datastreams for the device's template: the six system
 
 ## Remote terminal (on by default while this is a demo project)
 
-Blynk's [Terminal widget](https://docs.blynk.io/en/blynk.console/widgets-console/terminal) can give you a real shell on the device, entirely over the same outbound connection the agent already uses - no inbound port, no VPN, nothing exposed to the network beyond what's already there for Blynk itself. Commands run via `nsenter` into the host's own namespaces, so `pwd`/`ls`/`ps`/etc. reflect the actual Pi, not just the agent's own container.
+Blynk's [Terminal widget](https://docs.blynk.io/en/blynk.console/widgets-console/terminal) can give you a real shell on the device, entirely over the same outbound connection the agent already uses - no inbound port, no VPN, nothing exposed to the network beyond what's already there for Blynk itself. Commands run via `nsenter` into the host's own namespaces, so `pwd`/`ls`/`ps`/etc. reflect the actual device, not just the agent's own container.
 
 This is a real shell with real access, so it's behind two independent switches rather than one:
 
