@@ -43,12 +43,44 @@ from bluez_peripheral.gatt.service import Service
 from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags as CharFlags
 from bluez_peripheral.util import Adapter, get_message_bus
 from bluez_peripheral.advert import Advertisement
-from bluez_peripheral.agent import NoIoAgent
+from bluez_peripheral.agent import BaseAgent, AgentCapability
 from dbus_next import Variant
-from dbus_next.service import dbus_property
+from dbus_next.service import dbus_property, method
 from dbus_next.constants import PropertyAccess
 
 logger = logging.getLogger(__name__)
+
+
+class NoInputNoOutputAgent(BaseAgent):
+    """bluez-peripheral's own NoIoAgent (org.bluez.Agent1, NoInputNoOutput
+    capability) only implements RequestAuthorization/AuthorizeService, not
+    RequestConfirmation - confirmed on real hardware that BlueZ calls
+    RequestConfirmation anyway for at least some LE Secure Connections
+    pairing negotiations (observed via btmon: "Confirm hint: 0x01", i.e.
+    BlueZ itself already knows there's nothing meaningful to confirm), even
+    though this device has no display to show/verify a passkey with. An
+    agent object that doesn't export the method BlueZ tries to call fails
+    that call, which BlueZ then treats as a rejection - pairing fails
+    outright ("Numeric comparison failed") even though nothing was actually
+    wrong. A NoInputNoOutput device can't meaningfully validate a passkey
+    either way, so unconditionally accepting is the correct, spec-compliant
+    response - that's what "Just Works" means at the application layer."""
+
+    def __init__(self):
+        super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
+
+    @method()
+    def RequestAuthorization(self, device: "o"):  # type: ignore
+        pass
+
+    @method()
+    def RequestConfirmation(self, device: "o", passkey: "u"):  # type: ignore
+        pass
+
+    @method()
+    def AuthorizeService(self, device: "o", uuid: "s"):  # type: ignore
+        pass
+
 
 ADAPTER_PATH = "/org/bluez/hci0"
 
@@ -908,7 +940,7 @@ class ProvisioningSession:
 
             await self.service.register(bus, adapter=adapter)
 
-            agent = NoIoAgent()
+            agent = NoInputNoOutputAgent()
             await agent.register(bus)
 
             name = device_name(self.config.vendor_prefix)
