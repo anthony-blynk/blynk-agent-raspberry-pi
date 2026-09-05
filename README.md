@@ -5,12 +5,12 @@ Makes connecting a Linux device to Blynk effortless and powerful.
 A **Blynk Agent** handles all Blynk communication and control functions, paired with an **MQTT Bridge** that gives every application and process on the device seamless, concurrent access to Blynk over one shared, always-on connection — auth, certificates, and connection complexity handled entirely for you.
 
 - **One-command install** — a single script gets a fresh device fully connected to Blynk.
-- **Runs on a diverse range of devices** — from Raspberry Pi's, to NVIDIA edge AI platforms, or i.MX8-based industrial gateways.
+- **Runs on a diverse range of devices abd OS's** — from Raspberry Pi's, to NVIDIA edge AI platforms, or i.MX8-based industrial gateways. Raspbery Pi OS, Ubuntu, Debian.
 - **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet or WiFi.
-- **Zero-touch fleet deployment** — [pi-image-builder](pi-image-builder/) pre-bakes a Blynk-ready Raspberry Pi image (Pi 5 or Compute Module 4); flash it and it starts BLE-advertising immediately, no `install.sh`/SSH step needed at all.
+- **Zero-touch fleet deployment** — [pi-image-builder](pi-image-builder/) pre-bakes a Blynk-ready Raspberry Pi image ; flash it and ship the device; it starts BLE-advertising immediately at power on, no `install.sh`/SSH step needed at all.
 - **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
 - **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.
-- **Secure remote access** — a built-in Blynk Terminal gives you a real shell on the device with no VPN and no exposed ports.
+- **Secure remote access** — a built-in Blynk Terminal gives you a real shell on the device with no VPN needed and no exposed ports.
 - **Built-in observability** — automated device metrics gathering and a ready-made Blynk dashboard for monitoring device health.
 
 Where an MCU runs a single firmware, Linux runs many applications and processes side by side — Blynk Edge Agent keeps every benefit of that environment intact while giving all of them effortless, concurrent access to Blynk.
