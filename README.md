@@ -6,7 +6,7 @@ A **Blynk Agent** handles all Blynk communication and control functions, paired 
 
 - **One-command install** — a single script gets a fresh device fully connected to Blynk.
 - **Runs on a diverse range of devices abd OS's** — from Raspberry Pi's, to NVIDIA edge AI platforms, or i.MX8-based industrial gateways. Raspbery Pi OS, Ubuntu, Debian.
-- **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet or WiFi.
+- **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet, WiFi, or cellular.
 - **Zero-touch fleet deployment** — [pi-image-builder](pi-image-builder/) pre-bakes a Blynk-ready Raspberry Pi image ; flash it and ship the device; it starts BLE-advertising immediately at power on, no `install.sh`/SSH step needed at all.
 - **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
 - **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.

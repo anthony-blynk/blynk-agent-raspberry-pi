@@ -18,12 +18,18 @@ Cellular ("cell") is also implemented - NetworkManager activates the
 connection (same D-Bus pattern as WiFi, a "gsm" connection type instead of
 "802-11-wireless"), while modem/SIM identity and lock state (IMEI/IMSI/
 ICCID/PIN-required) come from ModemManager, a separate D-Bus service NM
-doesn't expose that information through itself. NOT YET VERIFIED against
-real hardware - written against the CompuLab IOT-GATE-iMX8's documented
-`nmcli connection add type gsm ...` flow and ModemManager's public D-Bus
-API, but treat the first real attempt (with a real SIM/data plan) as an
-iteration, not a guaranteed-correct implementation, same as everything
-else in this file needed real-hardware fixes before it actually worked.
+doesn't expose that information through itself. Confirmed against real
+hardware on two independent modems (a SIMCOM SIM7600G on a CompuLab
+IOT-GATE-iMX8, and a SIMCOM SIM7070 on a Raspberry Pi 5) - real SIM
+detection, PIN-lock handling, and a genuine end-to-end cellular data
+connection to Blynk Cloud all confirmed working. Note: automatic PLMN
+(network operator) selection can get stuck attempting to register on a
+network the SIM isn't actually authorized for, even when other visible
+networks would work fine - confirmed on real hardware with a roaming
+IoT SIM. This code doesn't work around that (relies on ModemManager/
+NetworkManager's default automatic selection); if it comes up again in
+the field, manually selecting a different operator via ModemManager
+resolves it.
 
 Note: bluez-peripheral's PyPI release (0.1.7) predates the API shown on
 its own docs site (which tracks an unreleased rewrite on GitHub master) -
