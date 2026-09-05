@@ -64,7 +64,7 @@ Installs Docker if needed, prompts for this device's Blynk server/template/auth 
 
 ## Testing the connection
 
-Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the dashboard. No complicated authetication needed, thats all dealt with by the Agent:
+Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the Blynk dashboard. No complicated authetication needed, thats all dealt with by the Agent:
 
 First, if you don't have paho-mqtt installed yet:
 ```
