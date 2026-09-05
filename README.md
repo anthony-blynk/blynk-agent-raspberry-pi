@@ -6,7 +6,7 @@ A **Blynk Agent** handles all Blynk communication and control functions, paired 
 
 - **One-command install** — a single script gets a fresh device fully connected to Blynk.
 - **Runs on a diverse range of devices abd OS's** — from Raspberry Pi's, to NVIDIA edge AI platforms, or i.MX8-based industrial gateways. Raspbery Pi OS, Ubuntu, Debian.
-- **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet, WiFi, or cellular.
+- **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — and connect seamlessly over Ethernet, WiFi, or cellular.
 - **Zero-touch fleet deployment** — [pi-image-builder](pi-image-builder/) pre-bakes a Blynk-ready Raspberry Pi image ; flash it and ship the device; it starts BLE-advertising immediately at power on, no `install.sh`/SSH step needed at all.
 - **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
 - **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.
@@ -62,13 +62,11 @@ curl -fsSL https://raw.githubusercontent.com/anthony-blynk/blynk-edge-agent/mast
 
 Installs Docker if needed, prompts for this device's Blynk server/template/auth token, and starts the stack. This only needs to run once per device — see [Updating](#updating).
 
-Blynk Enterprise clients running their own server and a branded mobile app can also set a vendor prefix at install time (`BLYNK_VENDOR_PREFIX`, defaults to `Blynk`) - it replaces "Blynk" in the BLE-advertised device name (e.g. `Blynk Device-971K` → `Acme Device-971K`) and the provisioning `vendor` field, so the device never shows unbranded "Blynk" text during setup.
-
 ## Testing the connection
 
 Once a device is provisioned, a quick way to confirm the bridge is actually working end-to-end - publish straight to a datastream from the device's own shell and watch it show up on the dashboard. No complicated authetication needed, thats all dealt with by the Agent:
 
-First:
+First, if you don't have paho-mqtt installed yet:
 ```
 sudo apt install python3-paho-mqtt
 ```
