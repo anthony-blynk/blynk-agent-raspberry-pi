@@ -5,8 +5,9 @@ Makes connecting a Linux device to Blynk effortless and powerful.
 A **Blynk Agent** handles all Blynk communication and control functions, paired with an **MQTT Bridge** that gives every application and process on the device seamless, concurrent access to Blynk over one shared, always-on connection — auth, certificates, and connection complexity handled entirely for you.
 
 - **One-command install** — a single script gets a fresh device fully connected to Blynk.
-- **Runs on a diverse range of devices** — Raspberry Pi's, NVIDIA edge AI platforms, or i.MX8-based industrial gateways.
+- **Runs on a diverse range of devices** — from Raspberry Pi's, to NVIDIA edge AI platforms, or i.MX8-based industrial gateways.
 - **Flexible provisioning** — Bluetooth provisioning via the Blynk mobile app, or a static token with QR code for pre-configured fleets — seamlessly over Ethernet or WiFi.
+- **Zero-touch fleet deployment** — [pi-image-builder](pi-image-builder/) pre-bakes a Blynk-ready Raspberry Pi image (Pi 5 or Compute Module 4); flash it and it starts BLE-advertising immediately, no `install.sh`/SSH step needed at all.
 - **Any application, any language** — containerize with Docker, or connect directly to the local MQTT Bridge from non-containerized processes.
 - **Managed OTA updates** — containerized applications get Blynk Air's fleet-wide managed updates for free.
 - **Secure remote access** — a built-in Blynk Terminal gives you a real shell on the device with no VPN and no exposed ports.
@@ -108,6 +109,12 @@ To set it up, create two datastreams for the device's template - `AgentTerminal`
 ## Updating
 
 Updates go through Blynk OTA, not by re-running `install.sh`. Grab the latest [`docker-compose.yml`](docker-compose.yml) (merging in your own additions if you've customized it) and upload it through your Blynk console's OTA feature for that device.
+
+## Pre-baked images for zero-touch deployment
+
+[`pi-image-builder`](pi-image-builder/) builds a ready-to-flash Raspberry Pi image (Pi 5 or Compute Module 4) with Docker, this project's stack, and the device's server/template ID already filled in - no auth token baked in (that's the one genuinely per-device secret, and still comes from the Blynk app during BLE provisioning). Flash it, power the device on with no network connection at all, and it starts BLE-advertising immediately - skipping `install.sh`/SSH entirely, which matters at real fleet scale where SSH-ing into every device individually isn't practical.
+
+Confirmed working end-to-end on real hardware for both a Pi 5 and a Compute Module 4 (including a Lite/non-wireless CM4 using USB Bluetooth and WiFi dongles instead of onboard radios) - see [`pi-image-builder/README.md`](pi-image-builder/README.md) for the build/flash steps and hardware-specific notes.
 
 ## Troubleshooting
 
